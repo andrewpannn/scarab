@@ -198,6 +198,10 @@ struct Mem_Req_struct {
   Counter dram_core_service_cycles_at_start; /* "Virtual clock" timestamp */
   uns fdip_pref_off_path;         /*set if the mem_req is requested by FDIP on the actual wrong path prediction*/
   Counter cyc_hit_by_demand_load; /*set if the mem_req (requested by FDIP) is hit by a demand load*/
+  
+  // === CUSTOM L1-TO-RF PREFETCH FIELDS ===
+  Flag is_l1_to_rf_pref;     /* Is this our custom register prefetch? */
+  int dest_phys_reg;         /* The physical register to write into */
 };
 
 /**************************************************************************************/

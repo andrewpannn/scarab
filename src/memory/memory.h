@@ -200,6 +200,10 @@ typedef struct Pref_Req_Info_Struct {
   uns distance;
   Flag bw_limited;
   Destination dest;  // Only MLC/L2 values matter
+
+  // === CUSTOM RFP FIELDS ===
+  Flag is_l1_to_rf_pref;
+  int dest_phys_reg;
 } Pref_Req_Info;
 
 typedef enum L1_Dyn_Partition_Policy_enum {
@@ -268,6 +272,8 @@ Mem_Req* mem_search_reqbuf_wrapper(uns8 proc_id, Addr addr, Mem_Req_Type type, u
                                    Flag* demand_hit_writeback, uns queues_to_search, Mem_Queue_Entry** queue_entry,
                                    Flag* ramulator_match);
 
+// ======= RFP CUSTOM =======
+void mark_rf_prefetch_produced(int proc_id, int phys_reg);
 /**************************************************************************************/
 /* Externs */
 

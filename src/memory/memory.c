@@ -67,6 +67,8 @@
 #include "ramulator.param.h"
 
 #include "ramulator.h"
+// ======= RFP CUSTOM =======
+#include "map_rename.h"
 
 /**************************************************************************************/
 /* Macros */
@@ -3556,6 +3558,9 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
   new_req->global_hist = (pref_info ? pref_info->global_hist : 0);
   new_req->bw_prefetch = (pref_info ? pref_info->bw_limited : FALSE);
   new_req->destination = destination;
+  // === RFP CUSTOM FIELDS ===
+  new_req->is_l1_to_rf_pref = (pref_info ? pref_info->is_l1_to_rf_pref : FALSE);
+  new_req->dest_phys_reg = (pref_info ? pref_info->dest_phys_reg : -1);
   if (type == MRT_FDIPPRFON || type == MRT_FDIPPRFOFF) {
     if (fdip_off_path(proc_id, 0))
       new_req->fdip_pref_off_path = 1;
@@ -4241,6 +4246,22 @@ Flag l1_fill_line(Mem_Req* req) {
   // this is just a stat collection
   wp_process_l1_fill(data, req);
 
+  // ==========================================
+  // RFP CUSTOM LOGIC
+  // ==========================================
+  if (req->is_l1_to_rf_pref) {
+      mark_rf_prefetch_produced(req->proc_id, req->dest_phys_reg);
+      
+      // We know the physical register ID, and the data is now in L1!
+      // We need to flip the physical register state from ALLOC to PRODUCED
+      
+      // pseudo-code:
+      // reg_table[target_phys_reg].state = REG_TABLE_ENTRY_STATE_PRODUCED;
+      
+      // Optional: You might also need to broadcast a wake-up signal to 
+      // the Reservation Station so dependent ops know they can execute.
+  }
+  // ==========================================
   return SUCCESS;
 }
 

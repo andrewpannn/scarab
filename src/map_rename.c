@@ -46,6 +46,8 @@
 #include "thread.h"
 #include "xed-interface.h"
 
+#include "memory/memory.h"
+
 /**************************************************************************************/
 /* Extern Definition */
 
@@ -80,6 +82,10 @@ void reg_table_produce(struct reg_table *reg_table, int self_reg_id, Op *op);
 // special init func for the architectural table
 void reg_table_arch_init(struct reg_table *reg_table, struct reg_table *parent_reg_table, uns reg_table_size,
                          int reg_type, int reg_table_type);
+
+// ======= RFP CUSTOM =======
+void mark_rf_prefetch_produced(int proc_id, int phys_reg);
+void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op);
 
 /**************************************************************************************/
 /* Inline Methods */
@@ -1833,6 +1839,36 @@ Flag reg_file_available(uns stage_op_count) {
   return reg_renaming_scheme_func_table[REG_RENAMING_SCHEME].available(stage_op_count);
 }
 
+void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
+    // 1. Create and set up the prefetch backpack
+    Pref_Req_Info pref_info = {0}; // Initialize all to 0
+    pref_info.dest = DEST_L1;      // We want this to go to the L1 Cache
+    
+    // Custom flags
+    pref_info.is_l1_to_rf_pref = TRUE;
+    pref_info.dest_phys_reg = phys_reg;
+
+    // MRT_DPRF stands for Memory Request Type: Data Prefetch
+    // size is usually 64 bytes (cache line size)
+    new_mem_req(MRT_DPRF, op->proc_id, perfect_address, 64, 0, op, NULL, op->unique_num, &pref_info);
+}
+
+// Called in memory.c
+void mark_rf_prefetch_produced(int proc_id, int phys_reg) {
+    // 1. Navigate through the structs to get to the Physical Table
+    // (Assuming we are dealing with General Purpose INT registers)
+    struct reg_table *phys_table = map_data->reg_file[REG_FILE_REG_TYPE_GENERAL_PURPOSE]->reg_table[REG_TABLE_TYPE_PHYSICAL];
+
+    // 2. Index into the array using your custom physical register ID
+    struct reg_table_entry *entry = &phys_table->entries[phys_reg];
+
+    // 3. Flip the state and wake up dependent instructions!
+    if (entry->reg_state == REG_TABLE_ENTRY_STATE_ALLOC) {
+        entry->reg_state = REG_TABLE_ENTRY_STATE_PRODUCED;
+        entry->produced_cycle = cycle_count;
+    }
+}
+
 /*
   Called by:
   --- map_stage.c -> when an op is fetched from cache stage data
@@ -1854,7 +1890,25 @@ void reg_file_rename(Op *op) {
   reg_renaming_scheme_func_table[REG_RENAMING_SCHEME].rename(op);
 
   reg_file_collect_rename_stat(op);
-}
+  
+  // === RFP CUSTOM FUNCTION ===
+  // calls new_mem_req found in memory.c
+  // modifies mem_req_struct in mem_req.h
+  // modifies pref_req_info in memory.h
+
+  // 1. Is this instruction a memory load?
+  if (op->table_info->mem_type == MEM_LD) { 
+      
+      // 2. Get oracle address
+      Addr oracle_address = op->oracle_info.va; 
+      
+      // 3. Get the physical register we just allocated
+      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
+      
+      // 4. Send the custom prefetch request
+      launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+  }
+  }
 
 /*
   Called by:
