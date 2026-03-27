@@ -1899,7 +1899,7 @@ void reg_file_rename(Op *op) {
 
   if (RFP_ENABLED) {
     // 1. Is this instruction a memory load?
-    if (op->table_info->mem_type == MEM_LD) { 
+    if (op->inst_info->table_info.mem_type == MEM_LD) { 
         
         // 2. Get oracle address
         Addr oracle_address = op->oracle_info.va; 
