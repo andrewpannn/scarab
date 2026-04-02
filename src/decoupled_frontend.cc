@@ -398,13 +398,11 @@ void Decoupled_FE::recover(Cf_Type cf_type, Recovery_Info* info) {
                                        [](uns8 pid, uns8 bid, Op* op) -> bool {
                                          frontend_fetch_op(pid, bid, op);
                                         
-                                          //if (RFP_ENABLED) {
-                                            printf("RFP_ENABLED\n");
+                                          if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                              printf("Launched prefetch\n");
                                               op->is_rfp = true;
                                             }
-                                          //}
+                                          }
 
                                          return true;
                                        },
@@ -536,12 +534,12 @@ void Decoupled_FE::update() {
                                         [](uns8 pid, uns8 bid, Op* op) -> bool {
                                           frontend_fetch_op(pid, bid, op);
                                           
-                                          //if (RFP_ENABLED) {
+                                          if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
                                               //printf("enter rfp on path\n");
                                               op->is_rfp = true;
                                             }
-                                          //}
+                                          }
 
                                           return true;
                                         },
@@ -582,11 +580,11 @@ void Decoupled_FE::update() {
                                         [](uns8 pid, uns8 bid, Op* op) -> bool {
                                           frontend_fetch_op(pid, bid, op);
 
-                                          //if (RFP_ENABLED) {
+                                          if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
                                               op->is_rfp = true;
                                             }
-                                          //}
+                                          }
 
                                           return true;
                                         },
@@ -809,11 +807,11 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
                                    [](uns8 pid, uns8 bid, Op* op) -> bool {
                                      frontend_fetch_op(pid, bid, op);
 
-                                      //if (RFP_ENABLED) {
+                                      if (RFP_ENABLED) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
                                           op->is_rfp = true;
                                         }
-                                      //}
+                                      }
                                         
                                      return true;
                                    },
@@ -857,11 +855,11 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
                                   [](uns8 pid, uns8 bid, Op* op) -> bool {
                                     frontend_fetch_op(pid, bid, op);
 
-                                    //if (RFP_ENABLED) {
+                                    if (RFP_ENABLED) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
                                           op->is_rfp = true;
                                         }
-                                    //}
+                                    }
 
                                     return true;
                                   },

@@ -248,6 +248,7 @@ void update_dcache_stage(Stage_Data* src_sd) {
     op->state = OS_SCHEDULED;
 
     // ==========================================================
+    // RFP addition
     if (op->is_rfp) {
       // Mark as completed instantly (0 cycles)
       op->done_cycle = cycle_count;
