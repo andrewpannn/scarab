@@ -847,10 +847,6 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
       continue;
     }
 
-    // RFP
-    if (op->wake_up_signaled[REG_DATA_DEP]) {
-        continue;
-    }
 
     /* Verify proc_id consistency only for valid ops we're going to process */
     ASSERT(dc->proc_id, dc->proc_id == op->proc_id);
@@ -870,26 +866,16 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     /* wake up dependent ops */
     DEBUG(dc->proc_id, "Awakening op_num:%lld %d %d\n", op->op_num, op->engine_info.l1_miss_satisfied, op->in_rdy_list);
     // RFP commented out
-    // ASSERT(dc->proc_id, !op->in_rdy_list);
-    
-    if (op->is_rfp) {
-        // printf("cheesecakefactorywalnut\n");
-        op->done_cycle   = cycle_count; 
-        op->dcache_cycle = cycle_count; 
-    } else {
-        op->done_cycle = cycle_count + 1; 
-        //printf("cheesecakefactorypeanut\n");
-    }
+    ASSERT(dc->proc_id, !op->in_rdy_list);
+
+    op->done_cycle = cycle_count + 1; 
+
     op->state = OS_SCHEDULED;
-    // }
 
     // Wake dependents instantly if not already woken
-    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-        if (op->is_rfp) {
-            op->wake_cycle = cycle_count; // Wake dependents 
-        } else {
-            op->wake_cycle = op->done_cycle; // Normal wake cycle
-        }
+    if (op->inst_info->table_info.mem_type != MEM_ST) {
+
+        op->wake_cycle = op->done_cycle; // Normal wake cycle
         wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
     }
   }
