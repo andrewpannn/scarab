@@ -247,6 +247,23 @@ void update_dcache_stage(Stage_Data* src_sd) {
     // memory ops are marked as scheduled so that they can be removed from the node->rdy_list
     op->state = OS_SCHEDULED;
 
+    // ==========================================================
+    if (op->is_rfp) {
+      // Mark as completed instantly (0 cycles)
+      op->done_cycle = cycle_count;
+      op->dcache_cycle = cycle_count;
+      op->oracle_info.dcmiss = FALSE; // Prevent miss stats from skewing
+
+      // Wake up dependent instructions immediately
+      if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+        op->wake_cycle = cycle_count;
+        wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+      }
+
+      // Skip cache access
+      continue;
+    }
+
     // ideal l2 l1 prefetcher bring l1 data immediately
     if (IDEAL_L2_L1_PREFETCHER)
       ideal_l2l1_prefetcher(op);
@@ -855,12 +872,12 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     // ASSERT(dc->proc_id, !op->in_rdy_list);
     
     if (op->is_rfp) {
-        printf("cheesecakefactorywalnut\n");
+        // printf("cheesecakefactorywalnut\n");
         op->done_cycle   = cycle_count; 
         op->dcache_cycle = cycle_count; 
     } else {
         op->done_cycle = cycle_count + 1; 
-        printf("cheesecakefactorypeanut\n");
+        //printf("cheesecakefactorypeanut\n");
     }
     op->state = OS_SCHEDULED;
     // }
