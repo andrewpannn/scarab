@@ -1898,6 +1898,7 @@ void reg_file_rename(Op *op) {
   // modifies pref_req_info in memory.h
 
   // 1. Is this instruction a memory load?
+  /*
   if (op->inst_info->table_info.mem_type == MEM_LD) { 
       
       // 2. Get oracle address
@@ -1909,6 +1910,7 @@ void reg_file_rename(Op *op) {
       // 4. Send the custom prefetch request
       launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
   }
+  */
   
   }
   
