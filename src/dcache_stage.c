@@ -854,14 +854,15 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     // RFP commented out
     // ASSERT(dc->proc_id, !op->in_rdy_list);
     
-    // if (op->state == OS_WAIT_MEM || op->state == OS_MISS || op->state == OS_WAIT_DCACHE || op->state == OS_WAIT_FWD) {
-      if (op->is_rfp) {
-          op->done_cycle   = cycle_count; 
-          op->dcache_cycle = cycle_count; 
-      } else {
-          op->done_cycle = cycle_count + 1; 
-      }
-      op->state = OS_SCHEDULED;
+    if (op->is_rfp) {
+        printf("cheesecakefactorywalnut\n");
+        op->done_cycle   = cycle_count; 
+        op->dcache_cycle = cycle_count; 
+    } else {
+        op->done_cycle = cycle_count + 1; 
+        printf("cheesecakefactorypeanut\n");
+    }
+    op->state = OS_SCHEDULED;
     // }
 
     // Wake dependents instantly if not already woken

@@ -396,6 +396,15 @@ void Decoupled_FE::recover(Cf_Type cf_type, Recovery_Info* info) {
               saved_recovery_ft->build([](uns8 pid, uns8 bid) { return frontend_can_fetch_op(pid, bid); },
                                        [](uns8 pid, uns8 bid, Op* op) -> bool {
                                          frontend_fetch_op(pid, bid, op);
+                                        
+                                          if (RFP_ENABLED) {
+                                            printf("RFP_ENABLED\n");
+                                            if (op->inst_info->table_info.mem_type == MEM_LD) {
+                                              printf("Launched prefetch\n");
+                                              op->is_rfp = true;
+                                            }
+                                          }
+
                                          return true;
                                        },
                                        false, conf_off_path, []() { return decoupled_fe_get_next_on_path_op_num(); });
@@ -526,8 +535,10 @@ void Decoupled_FE::update() {
                                         [](uns8 pid, uns8 bid, Op* op) -> bool {
                                           frontend_fetch_op(pid, bid, op);
                                           
-                                          if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                            op->is_rfp = true;
+                                          if (RFP_ENABLED) {
+                                            if (op->inst_info->table_info.mem_type == MEM_LD) {
+                                              op->is_rfp = true;
+                                            }
                                           }
 
                                           return true;
@@ -569,8 +580,10 @@ void Decoupled_FE::update() {
                                         [](uns8 pid, uns8 bid, Op* op) -> bool {
                                           frontend_fetch_op(pid, bid, op);
 
-                                          if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                            op->is_rfp = true;
+                                          if (RFP_ENABLED) {
+                                            if (op->inst_info->table_info.mem_type == MEM_LD) {
+                                              op->is_rfp = true;
+                                            }
                                           }
 
                                           return true;
@@ -794,8 +807,10 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
                                    [](uns8 pid, uns8 bid, Op* op) -> bool {
                                      frontend_fetch_op(pid, bid, op);
 
-                                     if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                            op->is_rfp = true;
+                                      if (RFP_ENABLED) {
+                                        if (op->inst_info->table_info.mem_type == MEM_LD) {
+                                          op->is_rfp = true;
+                                        }
                                       }
                                         
                                      return true;
@@ -839,6 +854,13 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
         current_ft_to_push->build([](uns8 pid, uns8 bid) { return frontend_can_fetch_op(pid, bid); },
                                   [](uns8 pid, uns8 bid, Op* op) -> bool {
                                     frontend_fetch_op(pid, bid, op);
+
+                                    if (RFP_ENABLED) {
+                                        if (op->inst_info->table_info.mem_type == MEM_LD) {
+                                          op->is_rfp = true;
+                                        }
+                                    }
+
                                     return true;
                                   },
                                   true, conf_off_path, []() { return decoupled_fe_get_next_off_path_op_num(); });
