@@ -153,7 +153,7 @@ struct Op_struct {
   // }}}
 
   //RFP FLAG
-  Flag rf_prefetch_completed;
+  Flag is_rfp;
 
   int32 perceptron_output;
   int32 conf_perceptron_output;  // confidece perceptron

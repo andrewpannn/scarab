@@ -855,7 +855,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     // ASSERT(dc->proc_id, !op->in_rdy_list);
     
     // if (op->state == OS_WAIT_MEM || op->state == OS_MISS || op->state == OS_WAIT_DCACHE || op->state == OS_WAIT_FWD) {
-      if (req->is_l1_to_rf_pref) {
+      if (op->is_rfp) {
           op->done_cycle   = cycle_count; 
           op->dcache_cycle = cycle_count; 
       } else {
@@ -866,7 +866,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
 
     // Wake dependents instantly if not already woken
     if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-        if (req->is_l1_to_rf_pref) {
+        if (op->is_rfp) {
             op->wake_cycle = cycle_count; // Wake dependents 
         } else {
             op->wake_cycle = op->done_cycle; // Normal wake cycle
