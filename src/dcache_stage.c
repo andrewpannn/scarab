@@ -853,36 +853,24 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     DEBUG(dc->proc_id, "Awakening op_num:%lld %d %d\n", op->op_num, op->engine_info.l1_miss_satisfied, op->in_rdy_list);
     // RFP commented out
     // ASSERT(dc->proc_id, !op->in_rdy_list);
-
-    op->done_cycle = cycle_count + 1; 
-    op->state = OS_SCHEDULED;
-    // If this was your custom RF prefetch, bypass all normal cache latencies
-    /*
-    if (req->is_l1_to_rf_pref) {
-
-        op->done_cycle   = cycle_count; // Zero latency wakeup
-        op->dcache_cycle = cycle_count; 
-        op->exec_cycle   = cycle_count;
-
-        if (op->exec_count == 0) {
-            reg_file_consume(op);
-            op->exec_count++;
-        }
-    } else {
-        op->done_cycle = cycle_count + 1; // Normal latency
-    }
-    */
-    // Wake up dependents
-    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-        
-      // THIS is where the zero-latency magic happens! 
-      // We wake the dependents up THIS cycle, even though the demand load retires next cycle.
+    
+    // if (op->state == OS_WAIT_MEM || op->state == OS_MISS || op->state == OS_WAIT_DCACHE || op->state == OS_WAIT_FWD) {
       if (req->is_l1_to_rf_pref) {
-        op->wake_cycle = cycle_count;     // 0-latency RF prefetch wakeup!
+          op->done_cycle   = cycle_count; 
+          op->dcache_cycle = cycle_count; 
       } else {
-        op->wake_cycle = op->done_cycle;  // Normal latency wakeup
+          op->done_cycle = cycle_count + 1; 
       }
-      
+      op->state = OS_SCHEDULED;
+    // }
+
+    // Wake dependents instantly if not already woken
+    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+        if (req->is_l1_to_rf_pref) {
+            op->wake_cycle = cycle_count; // Wake dependents 
+        } else {
+            op->wake_cycle = op->done_cycle; // Normal wake cycle
+        }
         wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
     }
   }
@@ -891,7 +879,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
    * This write_count is missing all the stores that retired before this fill happened.
    * Still, we know at least one on-path write must have occurred if the line is dirty.
    */
-  if (data->dirty && data->write_count[0] == 0)
+  if (data->dirty && data->write_count[0] == 0) 
     data->write_count[0] = 1;
 
   ASSERT(dc->proc_id, data->read_count[0] || data->read_count[1] || data->write_count[0] || data->write_count[1] ||
