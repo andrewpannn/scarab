@@ -152,6 +152,9 @@ struct Op_struct {
   int oracle_cp_num;            // if the op has created an oracle checkpointed this is not -1
   // }}}
 
+  //RFP FLAG
+  Flag rf_prefetch_completed;
+
   int32 perceptron_output;
   int32 conf_perceptron_output;  // confidece perceptron
   // {{{ state and event cycle counters

@@ -215,6 +215,9 @@ void op_pool_setup_op(uns proc_id, Op* op) {
   op->node_id = MAX_CTR;
   op->rs_id = MAX_CTR;
 
+  // RFP
+  op->rf_prefetch_completed = FALSE;
+
   op->bp_pred_info = NULL;
   memset(&op->bp_pred_l0, 0, sizeof(op->bp_pred_l0));
   memset(&op->bp_pred_main, 0, sizeof(op->bp_pred_main));

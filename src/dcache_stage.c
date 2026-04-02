@@ -277,7 +277,7 @@ void update_dcache_stage(Stage_Data* src_sd) {
       }
 
       op->done_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
-      if (op->inst_info->table_info.mem_type != MEM_ST) {
+      if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
         op->wake_cycle = op->done_cycle;
         wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
       }
@@ -576,7 +576,7 @@ static inline void dcache_cacheline_hit(Op* op, Addr line_addr, Dcache_Data* lin
   }
 
   /* wake up source inst if the op is completed */
-  if (op->inst_info->table_info.mem_type != MEM_ST) {
+  if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
     op->wake_cycle = op->done_cycle;
     wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
   }
@@ -605,8 +605,10 @@ static inline void dcache_cacheline_miss(Op* op, Addr line_addr) {
         }
 
         op->done_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
-        op->wake_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
-        wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+        if (!op->wake_up_signaled[REG_DATA_DEP]) {
+          op->wake_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
+          wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+        }
         break;
       }
 
@@ -827,6 +829,11 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
       continue;
     }
 
+    // RFP
+    if (op->wake_up_signaled[REG_DATA_DEP]) {
+        continue;
+    }
+
     /* Verify proc_id consistency only for valid ops we're going to process */
     ASSERT(dc->proc_id, dc->proc_id == op->proc_id);
     ASSERT(dc->proc_id, op->proc_id == req->proc_id);
@@ -844,14 +851,39 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
 
     /* wake up dependent ops */
     DEBUG(dc->proc_id, "Awakening op_num:%lld %d %d\n", op->op_num, op->engine_info.l1_miss_satisfied, op->in_rdy_list);
-    ASSERT(dc->proc_id, !op->in_rdy_list);
+    // RFP commented out
+    // ASSERT(dc->proc_id, !op->in_rdy_list);
 
-    op->done_cycle = cycle_count + 1;
+    op->done_cycle = cycle_count + 1; 
     op->state = OS_SCHEDULED;
+    // If this was your custom RF prefetch, bypass all normal cache latencies
+    /*
+    if (req->is_l1_to_rf_pref) {
 
-    if (op->inst_info->table_info.mem_type != MEM_ST) {
-      op->wake_cycle = op->done_cycle;
-      wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+        op->done_cycle   = cycle_count; // Zero latency wakeup
+        op->dcache_cycle = cycle_count; 
+        op->exec_cycle   = cycle_count;
+
+        if (op->exec_count == 0) {
+            reg_file_consume(op);
+            op->exec_count++;
+        }
+    } else {
+        op->done_cycle = cycle_count + 1; // Normal latency
+    }
+    */
+    // Wake up dependents
+    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+        
+      // THIS is where the zero-latency magic happens! 
+      // We wake the dependents up THIS cycle, even though the demand load retires next cycle.
+      if (req->is_l1_to_rf_pref) {
+        op->wake_cycle = cycle_count;     // 0-latency RF prefetch wakeup!
+      } else {
+        op->wake_cycle = op->done_cycle;  // Normal latency wakeup
+      }
+      
+        wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
     }
   }
 

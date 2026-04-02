@@ -4249,18 +4249,32 @@ Flag l1_fill_line(Mem_Req* req) {
   // ==========================================
   // RFP CUSTOM LOGIC
   // ==========================================
-  if (req->is_l1_to_rf_pref) {
-      mark_rf_prefetch_produced(req->proc_id, req->dest_phys_reg);
+  
+  /*
+  if (req->is_l1_to_rf_pref && req->op_count) {
+    Op **op_ptr;
+    
+    // Loop through every Op waiting on this memory request
+    for (op_ptr = (Op **)list_start_head_traversal(&req->op_ptrs); op_ptr;
+        op_ptr = (Op **)list_next_element(&req->op_ptrs)) {
+        
+      Op *pref_op = *op_ptr;
       
-      // We know the physical register ID, and the data is now in L1!
-      // We need to flip the physical register state from ALLOC to PRODUCED
-      
-      // pseudo-code:
-      // reg_table[target_phys_reg].state = REG_TABLE_ENTRY_STATE_PRODUCED;
-      
-      // Optional: You might also need to broadcast a wake-up signal to 
-      // the Reservation Station so dependent ops know they can execute.
+      // Did this op already finish via a store-forward or earlier hit?
+      if (!pref_op->wake_up_signaled[REG_DATA_DEP] && !pref_op->rf_prefetch_completed) {
+        pref_op->done_cycle = cycle_count + 1;
+        pref_op->wake_cycle = pref_op->done_cycle;
+        
+        // Flag it so the normal writeback stage skips it
+        pref_op->rf_prefetch_completed = TRUE;
+        
+        // Wake up dependents
+        wake_up_ops(pref_op, REG_DATA_DEP, model->wake_hook);
+      }
+    }
   }
+  */
+  // ==========================================
   // ==========================================
   return SUCCESS;
 }

@@ -1897,21 +1897,21 @@ void reg_file_rename(Op *op) {
   // modifies mem_req_struct in mem_req.h
   // modifies pref_req_info in memory.h
 
-  if (RFP_ENABLED) {
-    // 1. Is this instruction a memory load?
-    if (op->inst_info->table_info.mem_type == MEM_LD) { 
-        
-        // 2. Get oracle address
-        Addr oracle_address = op->oracle_info.va; 
-        
-        // 3. Get the physical register we just allocated
-        int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
-        
-        // 4. Send the custom prefetch request
-        launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
-    }
+  // 1. Is this instruction a memory load?
+  if (op->inst_info->table_info.mem_type == MEM_LD) { 
+      
+      // 2. Get oracle address
+      Addr oracle_address = op->oracle_info.va; 
+      
+      // 3. Get the physical register we just allocated
+      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
+      
+      // 4. Send the custom prefetch request
+      launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
   }
+  
   }
+  
 
 /*
   Called by:
