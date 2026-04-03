@@ -6,6 +6,8 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <unordered_map>
+#include <list>
 
 #include "core.param.h"
 #include "memory/memory.param.h"
@@ -29,6 +31,77 @@ static int fwd_progress = 0;
 // Per core decoupled frontend
 std::vector<std::vector<std::unique_ptr<Decoupled_FE>>> per_core_dfe;
 
+// ==========================================
+// RFP
+// STRIDE PREDICTOR EVALUATION LOGIC
+
+struct StrideState {
+    Addr last_addr = 0;
+    int64_t last_stride = 0;
+};
+
+const size_t PREDICTOR_CAPACITY = 1024;
+
+// LRU List - front = newest, back = oldest
+std::list<Addr> lru_list;
+
+// Stride prefetcher table
+// Key - PC
+// Value - Addr of last access, last stride, and list node
+std::unordered_map<Addr, std::pair<StrideState, std::list<Addr>::iterator>> stride_pref_table;
+
+uint64_t stride_correct = 0;
+uint64_t stride_total = 0;
+
+void evaluate_stride_predictor(Op* op) {
+    if (op->inst_info->table_info.mem_type != MEM_LD) return;
+    
+    Addr pc = op->inst_info->addr;
+    Addr actual_addr = op->oracle_info.va; 
+    
+    auto it = stride_pref_table.find(pc);
+    
+    if (it != stride_pref_table.end()) {
+        // Hit
+        // Predict addr by adding last_stride to last_addr
+        StrideState& state = it->second.first;
+        Addr predicted_addr = state.last_addr + state.last_stride;
+        stride_total++;
+        
+        if (predicted_addr == actual_addr) {
+            stride_correct++;
+        }
+        
+        // Update predictor state
+        state.last_stride = actual_addr - state.last_addr;
+        state.last_addr = actual_addr;
+        
+        // Move this PC to the MRU
+        lru_list.erase(it->second.second);
+        lru_list.push_front(pc);
+        it->second.second = lru_list.begin();
+        
+    } else {
+        // Miss, PC not in table
+        // Evict LRU if table is full
+        if (stride_pref_table.size() >= PREDICTOR_CAPACITY) {
+            Addr oldest_pc = lru_list.back();    // Get the LRU PC at the back of the list
+            lru_list.pop_back();                 // Remove it from the list
+            stride_pref_table.erase(oldest_pc);  // Remove it from the map
+        }
+        
+        // Allocate new entry to front of the list
+        lru_list.push_front(pc);
+        stride_pref_table[pc] = { {actual_addr, 0}, lru_list.begin() };
+    }
+    
+    // Print out accuracy every 50000 fetches
+    if (stride_total > 0 && stride_total % 50000 == 0) {
+        std::cout << "[RFP] 1024-Entry LRU Stride Accuracy: " 
+                  << (100.0 * stride_correct / stride_total) << "% (" 
+                  << stride_correct << " / " << stride_total << ")\n";
+    }
+}
 
 extern "C" {
 
@@ -402,6 +475,9 @@ void Decoupled_FE::recover(Cf_Type cf_type, Recovery_Info* info) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
                                               op->is_rfp = true;
                                             }
+                                            if (EVALUATE_PREFETCH) {
+                                              evaluate_stride_predictor(op);
+                                            }
                                           }
 
                                          return true;
@@ -539,6 +615,9 @@ void Decoupled_FE::update() {
                                               //printf("enter rfp on path\n");
                                               op->is_rfp = true;
                                             }
+                                            if (EVALUATE_PREFETCH) {
+                                              evaluate_stride_predictor(op);
+                                            }
                                           }
 
                                           return true;
@@ -583,6 +662,9 @@ void Decoupled_FE::update() {
                                           if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
                                               op->is_rfp = true;
+                                            }
+                                            if (EVALUATE_PREFETCH) {
+                                              evaluate_stride_predictor(op);
                                             }
                                           }
 
@@ -811,6 +893,9 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
                                           op->is_rfp = true;
                                         }
+                                        if (EVALUATE_PREFETCH) {
+                                          evaluate_stride_predictor(op);
+                                        }
                                       }
                                         
                                      return true;
@@ -858,6 +943,9 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
                                     if (RFP_ENABLED) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
                                           op->is_rfp = true;
+                                        }
+                                        if (EVALUATE_PREFETCH) {
+                                          evaluate_stride_predictor(op);
                                         }
                                     }
 
