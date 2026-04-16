@@ -249,7 +249,7 @@ void update_dcache_stage(Stage_Data* src_sd) {
 
     // ==========================================================
     // RFP addition
-    if (op->is_rfp) {
+    if (op->rfp_eligible) {
       // Mark as completed instantly (0 cycles)
       op->done_cycle = cycle_count;
       op->dcache_cycle = cycle_count;

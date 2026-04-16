@@ -473,7 +473,7 @@ void Decoupled_FE::recover(Cf_Type cf_type, Recovery_Info* info) {
                                         
                                           if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                              op->is_rfp = true;
+                                              op->rfp_eligible = true;
                                             }
                                             if (EVALUATE_PREFETCH) {
                                               evaluate_stride_predictor(op);
@@ -613,7 +613,7 @@ void Decoupled_FE::update() {
                                           if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
                                               //printf("enter rfp on path\n");
-                                              op->is_rfp = true;
+                                              op->rfp_eligible = true;
                                             }
                                             if (EVALUATE_PREFETCH) {
                                               evaluate_stride_predictor(op);
@@ -661,7 +661,7 @@ void Decoupled_FE::update() {
 
                                           if (RFP_ENABLED) {
                                             if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                              op->is_rfp = true;
+                                              op->rfp_eligible = true;
                                             }
                                             if (EVALUATE_PREFETCH) {
                                               evaluate_stride_predictor(op);
@@ -891,7 +891,7 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
 
                                       if (RFP_ENABLED) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                          op->is_rfp = true;
+                                          op->rfp_eligible = true;
                                         }
                                         if (EVALUATE_PREFETCH) {
                                           evaluate_stride_predictor(op);
@@ -942,7 +942,7 @@ void Decoupled_FE::redirect_to_off_path(FT_PredictResult result) {
 
                                     if (RFP_ENABLED) {
                                         if (op->inst_info->table_info.mem_type == MEM_LD) {
-                                          op->is_rfp = true;
+                                          op->rfp_eligible = true;
                                         }
                                         if (EVALUATE_PREFETCH) {
                                           evaluate_stride_predictor(op);
