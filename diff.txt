@@ -1,0 +1,261 @@
+diff --git a/src/dcache_stage.c b/src/dcache_stage.c
+index ffa636c..8a4e388 100644
+--- a/src/dcache_stage.c
++++ b/src/dcache_stage.c
+@@ -249,7 +249,7 @@ void update_dcache_stage(Stage_Data* src_sd) {
+ 
+     // ==========================================================
+     // RFP addition
+-    if (op->rfp_eligible) {
++    if (op->rfp_complete) {
+       // Mark as completed instantly (0 cycles)
+       op->done_cycle = cycle_count;
+       op->dcache_cycle = cycle_count;
+@@ -623,7 +623,7 @@ static inline void dcache_cacheline_miss(Op* op, Addr line_addr) {
+         }
+ 
+         op->done_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
+-        if (!op->wake_up_signaled[REG_DATA_DEP]) {
++        if (!op->wake_up_signaled[REG_DATA_DEP] && !op->wake_up_signaled[REG_DATA_DEP]) {
+           op->wake_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
+           wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+         }
+@@ -863,6 +863,13 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
+     DEBUG(dc->proc_id, "%s: %s line addr:0x%s: %7d\n", unsstr64(op->op_num), disasm_op(op, FALSE), hexstr64s(req->addr),
+           (int)(req->addr >> LOG2(DCACHE_LINE_SIZE)));
+ 
++    
++    // // RFP
++    // if (req->type == MRT_RFP) {
++    //     // op->state = OS_SCHEDULED;
++    //     continue;
++    // }
++
+     /* wake up dependent ops */
+     DEBUG(dc->proc_id, "Awakening op_num:%lld %d %d\n", op->op_num, op->engine_info.l1_miss_satisfied, op->in_rdy_list);
+     // RFP commented out
+@@ -873,7 +880,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
+     op->state = OS_SCHEDULED;
+ 
+     // Wake dependents instantly if not already woken
+-    if (op->inst_info->table_info.mem_type != MEM_ST) {
++    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+ 
+         op->wake_cycle = op->done_cycle; // Normal wake cycle
+         wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+diff --git a/src/map_rename.c b/src/map_rename.c
+index 8e1bd14..e6a327b 100644
+--- a/src/map_rename.c
++++ b/src/map_rename.c
+@@ -1846,12 +1846,11 @@ void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
+     pref_info.dest = DEST_L1;      // We want this to go to the L1 Cache
+     
+     // Custom flags
+-    pref_info.is_l1_to_rf_pref = TRUE;
+-    pref_info.dest_phys_reg = phys_reg;
++    // pref_info.is_l1_to_rf_pref = TRUE;
++    // pref_info.dest_phys_reg = phys_reg;
+ 
+-    // MRT_DPRF stands for Memory Request Type: Data Prefetch
+-    // size is usually 64 bytes (cache line size)
+-    new_mem_req(MRT_DPRF, op->proc_id, perfect_address, 64, 0, op, NULL, op->unique_num, &pref_info);
++    // Use custom type MRT_RFP to indicate prefetch request
++    new_mem_req(MRT_RFP, op->proc_id, perfect_address, 64, 0, op, NULL, op->unique_num, &pref_info);
+ }
+ 
+ // Called in memory.c
+@@ -1897,9 +1896,8 @@ void reg_file_rename(Op *op) {
+   // modifies mem_req_struct in mem_req.h
+   // modifies pref_req_info in memory.h
+ 
+-  // 1. Is this instruction a memory load?
+-  /*
+-  if (op->inst_info->table_info.mem_type == MEM_LD) { 
++  
++  if (op->rfp_eligible) { 
+       
+       // 2. Get oracle address
+       Addr oracle_address = op->oracle_info.va; 
+@@ -1910,7 +1908,7 @@ void reg_file_rename(Op *op) {
+       // 4. Send the custom prefetch request
+       launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+   }
+-  */
++  
+   
+   }
+   
+diff --git a/src/memory/mem_req.h b/src/memory/mem_req.h
+index 7d4e3bf..83d7144 100644
+--- a/src/memory/mem_req.h
++++ b/src/memory/mem_req.h
+@@ -75,7 +75,8 @@ typedef enum Mem_Req_State_enum {
+       elem(DPRF)         /* data prefetch */                      \
+       elem(WB)           /* writeback of dirty data */            \
+       elem(WB_NODIRTY)   /* writeback of clean data */            \
+-      elem(MIN_PRIORITY) /* request of minimal priority */
++      elem(MIN_PRIORITY) /* request of minimal priority */        \
++      elem(RFP)          /* register file prefetch*/
+ 
+ DECLARE_ENUM(Mem_Req_Type, MRT_LIST, MRT_);
+ 
+@@ -200,8 +201,8 @@ struct Mem_Req_struct {
+   Counter cyc_hit_by_demand_load; /*set if the mem_req (requested by FDIP) is hit by a demand load*/
+   
+   // === CUSTOM L1-TO-RF PREFETCH FIELDS ===
+-  Flag is_l1_to_rf_pref;     /* Is this our custom register prefetch? */
+-  int dest_phys_reg;         /* The physical register to write into */
++  // Flag is_l1_to_rf_pref;     /* Is this our custom register prefetch? */
++  // int dest_phys_reg;         /* The physical register to write into */
+ };
+ 
+ /**************************************************************************************/
+diff --git a/src/memory/memory.c b/src/memory/memory.c
+index 9f3dcb9..c7c027c 100644
+--- a/src/memory/memory.c
++++ b/src/memory/memory.c
+@@ -260,6 +260,9 @@ void init_mem_req_type_priorities() {
+       case MRT_MIN_PRIORITY:
+         priority = least_priority + 1;
+         break;
++      case MRT_RFP:
++        priority = least_priority;
++        break;
+       default:
+         FATAL_ERROR(0, "Priority for mem req type %s not specified\n", Mem_Req_Type_str(type));
+         break;
+@@ -1570,7 +1573,7 @@ static Flag mem_complete_l1_access(Mem_Req* req, Mem_Queue_Entry* l1_queue_entry
+           ASSERTM(0,
+                   req->type == MRT_DSTORE || req->type == MRT_IFETCH || req->type == MRT_DFETCH ||
+                       req->type == MRT_IPRF || req->type == MRT_DPRF || req->type == MRT_UOCPRF ||
+-                      req->type == MRT_FDIPPRFON || req->type == MRT_FDIPPRFOFF,
++                      req->type == MRT_FDIPPRFON || req->type == MRT_FDIPPRFOFF || req->type == MRT_RFP,
+                   "ERROR: Issuing a currently unhandled request type (%s) to "
+                   "Ramulator\n",
+                   Mem_Req_Type_str(req->type));
+@@ -3558,9 +3561,6 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
+   new_req->global_hist = (pref_info ? pref_info->global_hist : 0);
+   new_req->bw_prefetch = (pref_info ? pref_info->bw_limited : FALSE);
+   new_req->destination = destination;
+-  // === RFP CUSTOM FIELDS ===
+-  new_req->is_l1_to_rf_pref = (pref_info ? pref_info->is_l1_to_rf_pref : FALSE);
+-  new_req->dest_phys_reg = (pref_info ? pref_info->dest_phys_reg : -1);
+   if (type == MRT_FDIPPRFON || type == MRT_FDIPPRFOFF) {
+     if (fdip_off_path(proc_id, 0))
+       new_req->fdip_pref_off_path = 1;
+@@ -4249,31 +4249,22 @@ Flag l1_fill_line(Mem_Req* req) {
+   // ==========================================
+   // RFP CUSTOM LOGIC
+   // ==========================================
+-  
+-  /*
+-  if (req->is_l1_to_rf_pref && req->op_count) {
+-    Op **op_ptr;
+-    
+-    // Loop through every Op waiting on this memory request
+-    for (op_ptr = (Op **)list_start_head_traversal(&req->op_ptrs); op_ptr;
+-        op_ptr = (Op **)list_next_element(&req->op_ptrs)) {
++  if (req->type == MRT_RFP) {
++    if (req->op_count > 0) {
++      // Iterate through all Ops waiting on this cache line fill
++      List_Entry *current = list_start_head_traversal(&req->op_ptrs);
++      while (current != NULL) {
++        Op** op_ptr = list_get_current(&req->op_ptrs);
++        Op* pending_op = *op_ptr;
+         
+-      Op *pref_op = *op_ptr;
+-      
+-      // Did this op already finish via a store-forward or earlier hit?
+-      if (!pref_op->wake_up_signaled[REG_DATA_DEP] && !pref_op->rf_prefetch_completed) {
+-        pref_op->done_cycle = cycle_count + 1;
+-        pref_op->wake_cycle = pref_op->done_cycle;
+-        
+-        // Flag it so the normal writeback stage skips it
+-        pref_op->rf_prefetch_completed = TRUE;
++        if (pending_op) {
++          pending_op->rfp_complete = TRUE;      
++        }
+         
+-        // Wake up dependents
+-        wake_up_ops(pref_op, REG_DATA_DEP, model->wake_hook);
++        current = list_next_element(&req->op_ptrs);
+       }
+     }
+   }
+-  */
+   // ==========================================
+   // ==========================================
+   return SUCCESS;
+@@ -5030,6 +5021,9 @@ static void update_mem_req_occupancy_counter(Mem_Req_Type type, int delta) {
+     case MRT_WB_NODIRTY:
+       counter = &mem_req_wb_entries;
+       break;
++    case MRT_RFP:
++      counter = &mem_req_pref_entries;
++      break;
+     default:
+       FATAL_ERROR(0, "Unknown mem req state\n");
+       break;
+diff --git a/src/op_pool.c b/src/op_pool.c
+index 296c8b2..d4a76f6 100644
+--- a/src/op_pool.c
++++ b/src/op_pool.c
+@@ -216,7 +216,8 @@ void op_pool_setup_op(uns proc_id, Op* op) {
+   op->rs_id = MAX_CTR;
+ 
+   // RFP
+-  op->is_rfp = FALSE;
++  op->rfp_eligible = FALSE;
++  op->rfp_complete = FALSE;
+ 
+   op->bp_pred_info = NULL;
+   memset(&op->bp_pred_l0, 0, sizeof(op->bp_pred_l0));
+diff --git a/src/ramulator.cc b/src/ramulator.cc
+index 6794735..ed9b461 100644
+--- a/src/ramulator.cc
++++ b/src/ramulator.cc
+@@ -181,7 +181,7 @@ int ramulator_send(Mem_Req* scarab_req) {
+     DEBUG(scarab_req->proc_id, "Ramulator: Duplicate (%s) request to address %llx\n",
+           Mem_Req_Type_str(scarab_req->type), scarab_req->addr);
+     // Can have duplicate Ifetch and Dfetch requests, but only one of each
+-    ASSERT(0, it_scarab_req->second.size() <= 1);
++    ASSERT(0, (it_scarab_req->second.size() <= 4));
+ 
+     /* save it as an inflight request so later it will be moved to the resp_queue
+      * at the same time with the older request */
+@@ -273,7 +273,7 @@ void to_ramulator_req(const Mem_Req* scarab_req, Request* ramulator_req) {
+     ramulator_req->type = Request::Type::WRITE;
+   else if (scarab_req->type == MRT_DFETCH || scarab_req->type == MRT_DSTORE || scarab_req->type == MRT_IFETCH ||
+            scarab_req->type == MRT_IPRF || scarab_req->type == MRT_DPRF || scarab_req->type == MRT_UOCPRF ||
+-           scarab_req->type == MRT_FDIPPRFON || scarab_req->type == MRT_FDIPPRFOFF)
++           scarab_req->type == MRT_FDIPPRFON || scarab_req->type == MRT_FDIPPRFOFF || scarab_req->type == MRT_RFP)
+     ramulator_req->type = Request::Type::READ;
+   else
+     ASSERTM(scarab_req->proc_id, false, "Ramulator: Currently unsupported Scarab request type: %d\n", scarab_req->type);
+@@ -313,7 +313,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
+   ASSERTM(0,
+           (type == MRT_IFETCH) || (type == MRT_DFETCH) || (type == MRT_IPRF) || (type == MRT_DPRF) ||
+               (type == MRT_DSTORE) || (type == MRT_MIN_PRIORITY) || (type == MRT_FDIPPRFON) ||
+-              (type == MRT_FDIPPRFOFF) || (type == MRT_UOCPRF),
++              (type == MRT_FDIPPRFOFF) || (type == MRT_UOCPRF) || (type == MRT_RFP),
+           "Ramulator: Cannot search write requests in Ramulator request queue\n");
+   auto it_req = inflight_read_reqs.find(phys_addr);
+ 
+@@ -326,7 +326,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
+            type == MRT_UOCPRF))
+         return req;
+       else if ((req->type == MRT_DFETCH || req->type == MRT_DPRF || req->type == MRT_DSTORE) &&
+-               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE))
++               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE || type == MRT_RFP))
+         return req;
+     }
+   }
+@@ -340,7 +340,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
+            type == MRT_UOCPRF))
+         return resp.second;
+       else if ((resp.second->type == MRT_DFETCH || resp.second->type == MRT_DPRF || resp.second->type == MRT_DSTORE) &&
+-               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE))
++               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE || type == MRT_RFP))
+         return resp.second;
+     }
+   }

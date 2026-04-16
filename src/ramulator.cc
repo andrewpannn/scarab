@@ -181,7 +181,7 @@ int ramulator_send(Mem_Req* scarab_req) {
     DEBUG(scarab_req->proc_id, "Ramulator: Duplicate (%s) request to address %llx\n",
           Mem_Req_Type_str(scarab_req->type), scarab_req->addr);
     // Can have duplicate Ifetch and Dfetch requests, but only one of each
-    ASSERT(0, it_scarab_req->second.size() <= 1);
+    ASSERT(0, (it_scarab_req->second.size() <= 4) || (scarab_req->type == MRT_RFP));
 
     /* save it as an inflight request so later it will be moved to the resp_queue
      * at the same time with the older request */
@@ -273,7 +273,7 @@ void to_ramulator_req(const Mem_Req* scarab_req, Request* ramulator_req) {
     ramulator_req->type = Request::Type::WRITE;
   else if (scarab_req->type == MRT_DFETCH || scarab_req->type == MRT_DSTORE || scarab_req->type == MRT_IFETCH ||
            scarab_req->type == MRT_IPRF || scarab_req->type == MRT_DPRF || scarab_req->type == MRT_UOCPRF ||
-           scarab_req->type == MRT_FDIPPRFON || scarab_req->type == MRT_FDIPPRFOFF)
+           scarab_req->type == MRT_FDIPPRFON || scarab_req->type == MRT_FDIPPRFOFF || scarab_req->type == MRT_RFP)
     ramulator_req->type = Request::Type::READ;
   else
     ASSERTM(scarab_req->proc_id, false, "Ramulator: Currently unsupported Scarab request type: %d\n", scarab_req->type);
@@ -313,7 +313,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
   ASSERTM(0,
           (type == MRT_IFETCH) || (type == MRT_DFETCH) || (type == MRT_IPRF) || (type == MRT_DPRF) ||
               (type == MRT_DSTORE) || (type == MRT_MIN_PRIORITY) || (type == MRT_FDIPPRFON) ||
-              (type == MRT_FDIPPRFOFF) || (type == MRT_UOCPRF),
+              (type == MRT_FDIPPRFOFF) || (type == MRT_UOCPRF) || (type == MRT_RFP),
           "Ramulator: Cannot search write requests in Ramulator request queue\n");
   auto it_req = inflight_read_reqs.find(phys_addr);
 
@@ -326,7 +326,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
            type == MRT_UOCPRF))
         return req;
       else if ((req->type == MRT_DFETCH || req->type == MRT_DPRF || req->type == MRT_DSTORE) &&
-               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE))
+               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE || type == MRT_RFP))
         return req;
     }
   }
@@ -340,7 +340,7 @@ Mem_Req* ramulator_search_queue(long phys_addr, Mem_Req_Type type) {
            type == MRT_UOCPRF))
         return resp.second;
       else if ((resp.second->type == MRT_DFETCH || resp.second->type == MRT_DPRF || resp.second->type == MRT_DSTORE) &&
-               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE))
+               (type == MRT_DFETCH || type == MRT_DPRF || type == MRT_DSTORE || type == MRT_RFP))
         return resp.second;
     }
   }

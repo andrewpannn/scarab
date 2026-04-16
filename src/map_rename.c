@@ -1841,17 +1841,12 @@ Flag reg_file_available(uns stage_op_count) {
 }
 
 void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
-    // 1. Create and set up the prefetch backpack
     Pref_Req_Info pref_info = {0}; // Initialize all to 0
     pref_info.dest = DEST_L1;      // We want this to go to the L1 Cache
     
-    // Custom flags
-    pref_info.is_l1_to_rf_pref = TRUE;
-    pref_info.dest_phys_reg = phys_reg;
 
-    // MRT_DPRF stands for Memory Request Type: Data Prefetch
-    // size is usually 64 bytes (cache line size)
-    new_mem_req(MRT_DPRF, op->proc_id, perfect_address, 64, 0, op, NULL, op->unique_num, &pref_info);
+    // Use custom type MRT_RFP to indicate prefetch request
+    new_mem_req(MRT_RFP, op->proc_id, perfect_address, 64, 0, NULL, NULL, op->unique_num, &pref_info);
 }
 
 // Called in memory.c
@@ -1897,9 +1892,8 @@ void reg_file_rename(Op *op) {
   // modifies mem_req_struct in mem_req.h
   // modifies pref_req_info in memory.h
 
-  // 1. Is this instruction a memory load?
-  /*
-  if (op->inst_info->table_info.mem_type == MEM_LD) { 
+  
+  if (op->rfp_eligible) { 
       
       // 2. Get oracle address
       Addr oracle_address = op->oracle_info.va; 
@@ -1910,7 +1904,7 @@ void reg_file_rename(Op *op) {
       // 4. Send the custom prefetch request
       launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
   }
-  */
+  
   
   }
   

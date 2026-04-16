@@ -75,7 +75,8 @@ typedef enum Mem_Req_State_enum {
       elem(DPRF)         /* data prefetch */                      \
       elem(WB)           /* writeback of dirty data */            \
       elem(WB_NODIRTY)   /* writeback of clean data */            \
-      elem(MIN_PRIORITY) /* request of minimal priority */
+      elem(MIN_PRIORITY) /* request of minimal priority */        \
+      elem(RFP)          /* register file prefetch*/
 
 DECLARE_ENUM(Mem_Req_Type, MRT_LIST, MRT_);
 
@@ -200,8 +201,8 @@ struct Mem_Req_struct {
   Counter cyc_hit_by_demand_load; /*set if the mem_req (requested by FDIP) is hit by a demand load*/
   
   // === CUSTOM L1-TO-RF PREFETCH FIELDS ===
-  Flag is_l1_to_rf_pref;     /* Is this our custom register prefetch? */
-  int dest_phys_reg;         /* The physical register to write into */
+  // Flag is_l1_to_rf_pref;     /* Is this our custom register prefetch? */
+  // int dest_phys_reg;         /* The physical register to write into */
 };
 
 /**************************************************************************************/

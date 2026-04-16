@@ -260,6 +260,9 @@ void init_mem_req_type_priorities() {
       case MRT_MIN_PRIORITY:
         priority = least_priority + 1;
         break;
+      case MRT_RFP:
+        priority = least_priority;
+        break;
       default:
         FATAL_ERROR(0, "Priority for mem req type %s not specified\n", Mem_Req_Type_str(type));
         break;
@@ -1570,7 +1573,7 @@ static Flag mem_complete_l1_access(Mem_Req* req, Mem_Queue_Entry* l1_queue_entry
           ASSERTM(0,
                   req->type == MRT_DSTORE || req->type == MRT_IFETCH || req->type == MRT_DFETCH ||
                       req->type == MRT_IPRF || req->type == MRT_DPRF || req->type == MRT_UOCPRF ||
-                      req->type == MRT_FDIPPRFON || req->type == MRT_FDIPPRFOFF,
+                      req->type == MRT_FDIPPRFON || req->type == MRT_FDIPPRFOFF || req->type == MRT_RFP,
                   "ERROR: Issuing a currently unhandled request type (%s) to "
                   "Ramulator\n",
                   Mem_Req_Type_str(req->type));
@@ -3376,6 +3379,13 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
   matching_req = mem_search_reqbuf(proc_id, addr, type, size, &demand_hit_prefetch, &demand_hit_writeback,
                                    QUEUE_MLC | QUEUE_L1 | QUEUE_BUS_OUT | QUEUE_MEM | QUEUE_L1FILL | QUEUE_MLC_FILL,
                                    &queue_entry, &ramulator_match);
+  
+  // Drop RFP if address is already in flight
+  if (matching_req && type == MRT_RFP) {
+    // A request for this address is already in flight.
+    STAT_EVENT(proc_id, RFP_MATCHED_AND_DROPPED);
+    return TRUE; // Return TRUE to signal the request was "handled"
+  }
 
   // if HIER_MSHR_ON, we do not allow matching non-writebacks to writebacks
   // (otherwise the reserved entry counts get messed up)
@@ -3558,9 +3568,6 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
   new_req->global_hist = (pref_info ? pref_info->global_hist : 0);
   new_req->bw_prefetch = (pref_info ? pref_info->bw_limited : FALSE);
   new_req->destination = destination;
-  // === RFP CUSTOM FIELDS ===
-  new_req->is_l1_to_rf_pref = (pref_info ? pref_info->is_l1_to_rf_pref : FALSE);
-  new_req->dest_phys_reg = (pref_info ? pref_info->dest_phys_reg : -1);
   if (type == MRT_FDIPPRFON || type == MRT_FDIPPRFOFF) {
     if (fdip_off_path(proc_id, 0))
       new_req->fdip_pref_off_path = 1;
@@ -4249,31 +4256,22 @@ Flag l1_fill_line(Mem_Req* req) {
   // ==========================================
   // RFP CUSTOM LOGIC
   // ==========================================
-  
-  /*
-  if (req->is_l1_to_rf_pref && req->op_count) {
-    Op **op_ptr;
-    
-    // Loop through every Op waiting on this memory request
-    for (op_ptr = (Op **)list_start_head_traversal(&req->op_ptrs); op_ptr;
-        op_ptr = (Op **)list_next_element(&req->op_ptrs)) {
+  // if (req->type == MRT_RFP) {
+  //   if (req->op_count > 0) {
+  //     // Iterate through all Ops waiting on this cache line fill
+  //     List_Entry *current = list_start_head_traversal(&req->op_ptrs);
+  //     while (current != NULL) {
+  //       Op** op_ptr = list_get_current(&req->op_ptrs);
+  //       Op* pending_op = *op_ptr;
         
-      Op *pref_op = *op_ptr;
-      
-      // Did this op already finish via a store-forward or earlier hit?
-      if (!pref_op->wake_up_signaled[REG_DATA_DEP] && !pref_op->rf_prefetch_completed) {
-        pref_op->done_cycle = cycle_count + 1;
-        pref_op->wake_cycle = pref_op->done_cycle;
+  //       if (pending_op) {
+  //         pending_op->rfp_complete = TRUE;      
+  //       }
         
-        // Flag it so the normal writeback stage skips it
-        pref_op->rf_prefetch_completed = TRUE;
-        
-        // Wake up dependents
-        wake_up_ops(pref_op, REG_DATA_DEP, model->wake_hook);
-      }
-    }
-  }
-  */
+  //       current = list_next_element(&req->op_ptrs);
+  //     }
+  //   }
+  // }
   // ==========================================
   // ==========================================
   return SUCCESS;
@@ -5029,6 +5027,9 @@ static void update_mem_req_occupancy_counter(Mem_Req_Type type, int delta) {
     case MRT_WB:
     case MRT_WB_NODIRTY:
       counter = &mem_req_wb_entries;
+      break;
+    case MRT_RFP:
+      counter = &mem_req_pref_entries;
       break;
     default:
       FATAL_ERROR(0, "Unknown mem req state\n");

@@ -249,20 +249,42 @@ void update_dcache_stage(Stage_Data* src_sd) {
 
     // ==========================================================
     // RFP addition
+    // if (op->rfp_complete) {
+    //   // Mark as completed instantly (0 cycles)
+    //   op->done_cycle = cycle_count;
+    //   op->dcache_cycle = cycle_count;
+    //   op->oracle_info.dcmiss = FALSE; // Prevent miss stats from skewing
+
+    //   // Wake up dependent instructions immediately
+    //   if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+    //     op->wake_cycle = cycle_count;
+    //     wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+    //   }
+
+    //   // Skip cache access
+    //   continue;
+    // }
+    // Inside update_dcache_stage (dcache_stage.c)
     if (op->rfp_eligible) {
-      // Mark as completed instantly (0 cycles)
-      op->done_cycle = cycle_count;
-      op->dcache_cycle = cycle_count;
-      op->oracle_info.dcmiss = FALSE; // Prevent miss stats from skewing
+        Addr line_addr;
+        // Check if the RFP already brought the line into the L1
+        Dcache_Data* line = (Dcache_Data*)cache_access(&dc->dcache, op->oracle_info.va, &line_addr, FALSE);
 
-      // Wake up dependent instructions immediately
-      if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-        op->wake_cycle = cycle_count;
-        wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
-      }
+        if (line) {
+            // Fast path - data already arrived
+            op->done_cycle = cycle_count;
+            op->dcache_cycle = cycle_count;
+            op->oracle_info.dcmiss = FALSE;
 
-      // Skip cache access
-      continue;
+            if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+                op->wake_cycle = cycle_count;
+                wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+            }
+
+            //dc->sd.ops[oldest_index] = NULL;
+            //dc->sd.op_count--;
+            continue;
+        }
     }
 
     // ideal l2 l1 prefetcher bring l1 data immediately
@@ -623,7 +645,7 @@ static inline void dcache_cacheline_miss(Op* op, Addr line_addr) {
         }
 
         op->done_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
-        if (!op->wake_up_signaled[REG_DATA_DEP]) {
+        if (!op->wake_up_signaled[REG_DATA_DEP] && !op->wake_up_signaled[REG_DATA_DEP]) {
           op->wake_cycle = cycle_count + DCACHE_CYCLES + op->inst_info->extra_ld_latency;
           wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
         }
@@ -863,6 +885,13 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     DEBUG(dc->proc_id, "%s: %s line addr:0x%s: %7d\n", unsstr64(op->op_num), disasm_op(op, FALSE), hexstr64s(req->addr),
           (int)(req->addr >> LOG2(DCACHE_LINE_SIZE)));
 
+    
+    // RFP
+    if (req->type == MRT_RFP) {
+        op->rfp_complete = TRUE;
+        continue;
+    }
+
     /* wake up dependent ops */
     DEBUG(dc->proc_id, "Awakening op_num:%lld %d %d\n", op->op_num, op->engine_info.l1_miss_satisfied, op->in_rdy_list);
     // RFP commented out
@@ -873,7 +902,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     op->state = OS_SCHEDULED;
 
     // Wake dependents instantly if not already woken
-    if (op->inst_info->table_info.mem_type != MEM_ST) {
+    if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
 
         op->wake_cycle = op->done_cycle; // Normal wake cycle
         wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
