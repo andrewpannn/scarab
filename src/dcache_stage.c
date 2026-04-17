@@ -249,29 +249,11 @@ void update_dcache_stage(Stage_Data* src_sd) {
 
     // ==========================================================
     // RFP addition
-    // if (op->rfp_complete) {
-    //   // Mark as completed instantly (0 cycles)
-    //   op->done_cycle = cycle_count;
-    //   op->dcache_cycle = cycle_count;
-    //   op->oracle_info.dcmiss = FALSE; // Prevent miss stats from skewing
-
-    //   // Wake up dependent instructions immediately
-    //   if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-    //     op->wake_cycle = cycle_count;
-    //     wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
-    //   }
-
-    //   // Skip cache access
-    //   continue;
-    // }
     // Inside update_dcache_stage (dcache_stage.c)
     if (op->rfp_eligible) {
-        Addr line_addr;
-        // Check if the RFP already brought the line into the L1
-        Dcache_Data* line = (Dcache_Data*)cache_access(&dc->dcache, op->oracle_info.va, &line_addr, FALSE);
-
-        if (line) {
+        if (get_rfp_state(op->unique_num) == RFP_COMPLETED) {
             // Fast path - data already arrived
+            STAT_EVENT(op->proc_id, RFP_USEFUL);
             op->done_cycle = cycle_count;
             op->dcache_cycle = cycle_count;
             op->oracle_info.dcmiss = FALSE;
@@ -285,6 +267,8 @@ void update_dcache_stage(Stage_Data* src_sd) {
             //dc->sd.op_count--;
             continue;
         }
+        // ASSERT(dc->proc_id, get_rfp_state(op->unique_num) == RFP_PENDING);
+        STAT_EVENT(op->proc_id, RFP_NOT_USEFUL);
     }
 
     // ideal l2 l1 prefetcher bring l1 data immediately
@@ -888,7 +872,7 @@ static inline void dcache_fill_process_cacheline(Mem_Req* req, Dcache_Data* data
     
     // RFP
     if (req->type == MRT_RFP) {
-        op->rfp_complete = TRUE;
+        set_rfp_state(op->unique_num, RFP_COMPLETED);
         continue;
     }
 

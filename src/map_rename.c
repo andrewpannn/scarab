@@ -1847,6 +1847,7 @@ void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
 
     // Use custom type MRT_RFP to indicate prefetch request
     new_mem_req(MRT_RFP, op->proc_id, perfect_address, 64, 0, NULL, NULL, op->unique_num, &pref_info);
+    set_rfp_state(op->unique_num, RFP_PENDING);
 }
 
 // Called in memory.c
@@ -1894,6 +1895,11 @@ void reg_file_rename(Op *op) {
 
   
   if (op->rfp_eligible) { 
+
+    if (mem->l1_queue.entry_count > (mem->l1_queue.size / 2)) {
+            // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+            return; // Skip the prefetch entirely
+        }
       
       // 2. Get oracle address
       Addr oracle_address = op->oracle_info.va; 
@@ -1903,6 +1909,7 @@ void reg_file_rename(Op *op) {
       
       // 4. Send the custom prefetch request
       launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+      STAT_EVENT(map_data->proc_id, RFP_INJECTED);
   }
   
   

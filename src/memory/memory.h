@@ -51,6 +51,18 @@
 /**************************************************************************************/
 /* Types */
 
+// RFP Table
+#define RFP_TRACKER_SIZE 4096 // Must be larger than max in-flight ops
+
+typedef enum { RFP_NONE = 0, RFP_PENDING, RFP_COMPLETED } RFP_State;
+
+typedef struct {
+    Counter unique_num; // Store this to verify we don't have a stale entry
+    RFP_State state;
+} RFP_Tracker_Entry;
+
+extern RFP_Tracker_Entry rfp_tracker[RFP_TRACKER_SIZE];
+
 typedef struct L1_Data_struct {
   uns8 proc_id;       /* processor id that generated this miss */
   Flag dirty;         /* is the line dirty? */
@@ -274,6 +286,8 @@ Mem_Req* mem_search_reqbuf_wrapper(uns8 proc_id, Addr addr, Mem_Req_Type type, u
 
 // ======= RFP CUSTOM =======
 void mark_rf_prefetch_produced(int proc_id, int phys_reg);
+void set_rfp_state(Counter unique_num, RFP_State state);
+RFP_State get_rfp_state(Counter unique_num);
 /**************************************************************************************/
 /* Externs */
 

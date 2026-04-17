@@ -193,6 +193,28 @@ static inline uns queue_num_free(Mem_Queue* queue);
 Flag is_final_state(Mem_Req_State state);
 Flag is_inv_state(Mem_Req_State state);
 
+RFP_Tracker_Entry rfp_tracker[RFP_TRACKER_SIZE];
+
+void set_rfp_state(Counter unique_num, RFP_State state);
+RFP_State get_rfp_state(Counter unique_num);
+
+// --- TO INSERT / UPDATE ---
+void set_rfp_state(Counter unique_num, RFP_State state) {
+    uns index = unique_num % RFP_TRACKER_SIZE;
+    rfp_tracker[index].unique_num = unique_num;
+    rfp_tracker[index].state = state;
+}
+
+// --- TO CHECK ---
+RFP_State get_rfp_state(Counter unique_num) {
+    uns index = unique_num % RFP_TRACKER_SIZE;
+    // Verify this entry actually belongs to THIS instruction, not an old one
+    if (rfp_tracker[index].unique_num == unique_num) {
+        return rfp_tracker[index].state;
+    }
+    return RFP_NONE; 
+}
+
 /**************************************************************************************/
 /* set_memory: */
 
@@ -261,7 +283,7 @@ void init_mem_req_type_priorities() {
         priority = least_priority + 1;
         break;
       case MRT_RFP:
-        priority = least_priority;
+        priority = 0;
         break;
       default:
         FATAL_ERROR(0, "Priority for mem req type %s not specified\n", Mem_Req_Type_str(type));
@@ -293,6 +315,9 @@ void init_memory() {
   memset(mem, 0, sizeof(Memory));
 
   init_mem_req_type_priorities();
+
+  // INIT RFP
+  memset(rfp_tracker, 0, RFP_TRACKER_SIZE * sizeof(RFP_Tracker_Entry));
 
   /* Initialize request buffers */
   mem->total_mem_req_buffers = MEM_REQ_BUFFER_ENTRIES * (PRIVATE_MSHR_ON ? NUM_CORES : 1);
@@ -1055,6 +1080,11 @@ Flag mem_process_l1_hit_access(Mem_Req* req, Mem_Queue_Entry* l1_queue_entry, Ad
 
   if (L2L1PREF_ON)
     l2l1pref_mem(req);
+
+  
+  if (req->type == MRT_RFP) {
+    set_rfp_state(req->unique_num, RFP_COMPLETED);
+  }
 
   return TRUE;
 }
@@ -2787,7 +2817,15 @@ Flag mem_adjust_matching_request(Mem_Req* req, Mem_Req_Type type, Addr addr, uns
       // internally
       memview_req_changed_type(req);
     }
-  }
+  } 
+  // else if (unique_num != 0) { // RFP
+  //     // If op is NULL but a valid unique_num was passed (e.g., MRT_RFP coalescing)
+  //     // we MUST track this unique_num so it gets the COMPLETED signal.
+  //     op_unique = sl_list_add_tail(&req->op_uniques);
+  //     // op_unique = sl_list_add_tail(&req->op_ptrs);
+  //     *op_unique = unique_num;
+  //     // req->op_count++;
+  // }
 
   /* Determine priority change and resort */
   if (higher_priority && !ALL_FIFO_QUEUES) {
@@ -3380,12 +3418,15 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
                                    QUEUE_MLC | QUEUE_L1 | QUEUE_BUS_OUT | QUEUE_MEM | QUEUE_L1FILL | QUEUE_MLC_FILL,
                                    &queue_entry, &ramulator_match);
   
-  // Drop RFP if address is already in flight
   if (matching_req && type == MRT_RFP) {
-    // A request for this address is already in flight.
-    STAT_EVENT(proc_id, RFP_MATCHED_AND_DROPPED);
-    return TRUE; // Return TRUE to signal the request was "handled"
+    if (matching_req->state)
   }
+  // Drop RFP if address is already in flight
+  // if (matching_req && type == MRT_RFP) {
+  //   // A request for this address is already in flight.
+  //   STAT_EVENT(proc_id, RFP_MATCHED_AND_DROPPED);
+  //   return TRUE; // Return TRUE to signal the request was "handled"
+  // }
 
   // if HIER_MSHR_ON, we do not allow matching non-writebacks to writebacks
   // (otherwise the reserved entry counts get messed up)
@@ -4253,25 +4294,22 @@ Flag l1_fill_line(Mem_Req* req) {
   // this is just a stat collection
   wp_process_l1_fill(data, req);
 
+  
   // ==========================================
   // RFP CUSTOM LOGIC
   // ==========================================
   // if (req->type == MRT_RFP) {
-  //   if (req->op_count > 0) {
-  //     // Iterate through all Ops waiting on this cache line fill
-  //     List_Entry *current = list_start_head_traversal(&req->op_ptrs);
-  //     while (current != NULL) {
-  //       Op** op_ptr = list_get_current(&req->op_ptrs);
-  //       Op* pending_op = *op_ptr;
-        
-  //       if (pending_op) {
-  //         pending_op->rfp_complete = TRUE;      
-  //       }
-        
-  //       current = list_next_element(&req->op_ptrs);
-  //     }
-  //   }
+  //   set_rfp_state(req->unique_num, RFP_COMPLETED);
   // }
+  if (req->type == MRT_RFP) {
+      // Iterate through ALL instructions that coalesced into this prefetch
+      Counter* unq;
+      for (unq = (Counter*)list_start_head_traversal(&req->op_uniques); unq; unq = (Counter*)list_next_element(&req->op_uniques)) {
+          set_rfp_state(*unq, RFP_COMPLETED);
+      }
+      // You might also want to prevent normal wake-up logic for RFPs here, 
+      // since the tracker handles it.
+  }
   // ==========================================
   // ==========================================
   return SUCCESS;
@@ -4858,6 +4896,7 @@ void wp_process_l1_hit(L1_Data* line, Mem_Req* req) {
 
   if (!WP_COLLECT_STATS)
     return;
+  
 
   if (!req->off_path) {
     if (line->fetched_by_offpath) {
