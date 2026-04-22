@@ -3371,6 +3371,44 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
 
   new_priority = Mem_Req_Priority_Offset[type] + priority_offset;
 
+  if (op != NULL) {
+
+    /* 1) On-path demand loads: keep default priority
+    *    We do NOT aggressively boost them here.
+    */
+
+    /* 2) Stores: slightly lower priority than loads */
+    if (!op->off_path && type == MRT_DSTORE) {
+      new_priority += 4;
+    }
+
+    /* 3) Off-path demand requests: deprioritize */
+    if (op->off_path &&
+        (type == MRT_DFETCH || type == MRT_DSTORE || type == MRT_IFETCH)) {
+      new_priority += 8;
+    }
+    if (type == MRT_RFP) {
+      Addr load_pc = op->inst_info ? op->inst_info->addr : 0;
+
+      if ((load_pc & 1) == 0) {
+        /* higher-tier RFP: only slightly better than default RFP */
+        if (new_priority >= 2) {
+          new_priority -= 2;
+        } else {
+          new_priority = 0;
+        }
+      } else {
+        /* lower-tier RFP: slightly worse than default RFP */
+        new_priority += 6;
+      }
+    }
+
+    /* 5) Normal prefetches remain low priority */
+    if (type == MRT_DPRF || type == MRT_IPRF) {
+      new_priority += 8;
+    }
+  }
+
   /* Step 1: Figure out if this access is already in the request buffer */
   // Search ramulator queue
   matching_req = mem_search_reqbuf(proc_id, addr, type, size, &demand_hit_prefetch, &demand_hit_writeback,
