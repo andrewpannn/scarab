@@ -283,7 +283,7 @@ void init_mem_req_type_priorities() {
         priority = least_priority + 1;
         break;
       case MRT_RFP:
-        priority = 0;
+        priority = least_priority;
         break;
       default:
         FATAL_ERROR(0, "Priority for mem req type %s not specified\n", Mem_Req_Type_str(type));
@@ -3417,16 +3417,48 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
   matching_req = mem_search_reqbuf(proc_id, addr, type, size, &demand_hit_prefetch, &demand_hit_writeback,
                                    QUEUE_MLC | QUEUE_L1 | QUEUE_BUS_OUT | QUEUE_MEM | QUEUE_L1FILL | QUEUE_MLC_FILL,
                                    &queue_entry, &ramulator_match);
-  
-  if (matching_req && type == MRT_RFP) {
-    if (matching_req->state)
+
+  if (matching_req != NULL && matching_req->type == MRT_RFP) {
+      
+      // Evaluate if the RFP request has actually been scheduled
+      switch (matching_req->state) {
+          
+          /* --- UNSCHEDULED / QUEUED STATES --- */
+          case MRS_INV:
+          case MRS_L1_NEW:
+          case MRS_MLC_NEW:
+          case MRS_BUS_NEW:
+          case MRS_MEM_NEW:
+              // Do nothing. The RFP hasn't started hiding latency.
+              STAT_EVENT(proc_id, RFP_NOTSTARTED);
+              break;
+
+          /* --- SCHEDULED / IN-FLIGHT STATES --- */
+          case MRS_L1_WAIT:
+          case MRS_MLC_WAIT:
+          case MRS_MEM_SCHEDULED:
+          case MRS_MEM_WAIT:
+          case MRS_BUS_BUSY:
+          case MRS_BUS_WAIT:
+          case MRS_FILL_L1:
+          case MRS_FILL_MLC:
+
+              STAT_EVENT(proc_id, RFP_INFLIGHT); 
+              break;
+
+          /* --- FINAL STATES --- */
+          case MRS_L1_HIT_DONE:
+          case MRS_MLC_HIT_DONE:
+          case MRS_MEM_DONE:
+          case MRS_BUS_IN_DONE:
+          case MRS_FILL_DONE:
+              STAT_EVENT(proc_id, RFP_FINISHED);
+              break;
+              
+          default:
+              break;
+      }
   }
-  // Drop RFP if address is already in flight
-  // if (matching_req && type == MRT_RFP) {
-  //   // A request for this address is already in flight.
-  //   STAT_EVENT(proc_id, RFP_MATCHED_AND_DROPPED);
-  //   return TRUE; // Return TRUE to signal the request was "handled"
-  // }
 
   // if HIER_MSHR_ON, we do not allow matching non-writebacks to writebacks
   // (otherwise the reserved entry counts get messed up)
