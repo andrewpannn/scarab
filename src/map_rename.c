@@ -1937,14 +1937,17 @@ void reg_file_rename(Op *op) {
   if (op->rfp_eligible) {
     if (op->inst_info->table_info.mem_type != MEM_LD) {
       return;
-  }
+    }
     Addr actual_address = op->oracle_info.va;
     Addr predicted_address = 0;
 
+    STAT_EVENT(map_data->proc_id, RFP_PREDICT_ATTEMPT);
+
     if (rfp_predict_addr(op, &predicted_address)) {
-      //STAT_EVENT(map_data->proc_id, RFP_PREDICT_ATTEMPT);
+      STAT_EVENT(map_data->proc_id, RFP_PREDICT_HIT);
       int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
       launch_l1_to_rf_prefetch(predicted_address, phys_reg, op);
+      STAT_EVENT(map_data->proc_id, RFP_INJECTED);
     }
 
     rfp_update_predictor(op, actual_address);
