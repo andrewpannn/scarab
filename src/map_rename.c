@@ -89,11 +89,16 @@ void mark_rf_prefetch_produced(int proc_id, int phys_reg);
 void launch_l1_to_rf_prefetch(Addr prefetch_address, int phys_reg, Op* op);
 
 #define RFP_PRED_TABLE_SIZE 1024
+#define RFP_CONF_THRESHOLD 2
+#define RFP_MAX_CONF 3
 
 typedef struct RFP_Pred_Entry {
   Flag valid;
   Addr pc;
+  Addr prev_addr;
   Addr last_addr;
+  Addr stride;
+  uns confidence;
 } RFP_Pred_Entry;
 
 static RFP_Pred_Entry rfp_pred_table[RFP_PRED_TABLE_SIZE];
@@ -105,13 +110,18 @@ static Flag rfp_predict_addr(Op *op, Addr *pred_addr) {
 
   Addr pc = op->inst_info->addr;
   uns index = pc % RFP_PRED_TABLE_SIZE;
+  RFP_Pred_Entry *entry = &rfp_pred_table[index];
 
-  if (rfp_pred_table[index].valid && rfp_pred_table[index].pc == pc) {
-    *pred_addr = rfp_pred_table[index].last_addr;
-    return TRUE;
+  if (!entry->valid || entry->pc != pc) {
+    return FALSE;
   }
 
-  return FALSE;
+  if (entry->confidence < RFP_CONF_THRESHOLD) {
+    return FALSE;
+  }
+
+  *pred_addr = entry->last_addr + entry->stride;
+  return TRUE;
 }
 
 static void rfp_update_predictor(Op *op, Addr actual_addr) {
@@ -121,10 +131,33 @@ static void rfp_update_predictor(Op *op, Addr actual_addr) {
 
   Addr pc = op->inst_info->addr;
   uns index = pc % RFP_PRED_TABLE_SIZE;
+  RFP_Pred_Entry *entry = &rfp_pred_table[index];
 
-  rfp_pred_table[index].valid = TRUE;
-  rfp_pred_table[index].pc = pc;
-  rfp_pred_table[index].last_addr = actual_addr;
+  if (!entry->valid || entry->pc != pc) {
+    entry->valid = TRUE;
+    entry->pc = pc;
+    entry->prev_addr = actual_addr;
+    entry->last_addr = actual_addr;
+    entry->stride = 0;
+    entry->confidence = 0;
+    return;
+  }
+
+  Addr new_stride = actual_addr - entry->last_addr;
+
+  if (new_stride == entry->stride) {
+    if (entry->confidence < RFP_MAX_CONF) {
+      entry->confidence++;
+    }
+  } else {
+    if (entry->confidence > 0) {
+      entry->confidence--;
+    }
+    entry->stride = new_stride;
+  }
+
+  entry->prev_addr = entry->last_addr;
+  entry->last_addr = actual_addr;
 }
 
 
@@ -1881,13 +1914,12 @@ Flag reg_file_available(uns stage_op_count) {
   return reg_renaming_scheme_func_table[REG_RENAMING_SCHEME].available(stage_op_count);
 }
 
-void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
-    Pref_Req_Info pref_info = {0}; // Initialize all to 0
-    pref_info.dest = DEST_L1;      // We want this to go to the L1 Cache
-    
+void launch_l1_to_rf_prefetch(Addr prefetch_address, int phys_reg, Op* op) {
+    Pref_Req_Info pref_info = {0};
+    pref_info.dest = DEST_L1;
 
-    // Use custom type MRT_RFP to indicate prefetch request
-    new_mem_req(MRT_RFP, op->proc_id, perfect_address, 64, 0, NULL, NULL, op->unique_num, &pref_info);
+    new_mem_req(MRT_RFP, op->proc_id, prefetch_address, 64, 0, NULL, NULL,
+                op->unique_num, &pref_info);
 }
 
 // Called in memory.c
@@ -1937,12 +1969,12 @@ void reg_file_rename(Op *op) {
   if (op->rfp_eligible) {
     if (op->inst_info->table_info.mem_type != MEM_LD) {
       return;
-  }
+    }
+
     Addr actual_address = op->oracle_info.va;
     Addr predicted_address = 0;
 
     if (rfp_predict_addr(op, &predicted_address)) {
-      //STAT_EVENT(map_data->proc_id, RFP_PREDICT_ATTEMPT);
       int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
       launch_l1_to_rf_prefetch(predicted_address, phys_reg, op);
     }
