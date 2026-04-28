@@ -88,6 +88,45 @@ void reg_table_arch_init(struct reg_table *reg_table, struct reg_table *parent_r
 void mark_rf_prefetch_produced(int proc_id, int phys_reg);
 void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op);
 
+#define RFP_PRED_TABLE_SIZE 1024
+
+typedef struct RFP_Pred_Entry {
+  Flag valid;
+  Addr pc;
+  Addr last_addr;
+} RFP_Pred_Entry;
+
+static RFP_Pred_Entry rfp_pred_table[RFP_PRED_TABLE_SIZE];
+
+static Flag rfp_predict_addr(Op *op, Addr *pred_addr) {
+  if (op == NULL || op->inst_info == NULL) {
+    return FALSE;
+  }
+
+  Addr pc = op->inst_info->addr;
+  uns index = pc % RFP_PRED_TABLE_SIZE;
+
+  if (rfp_pred_table[index].valid && rfp_pred_table[index].pc == pc) {
+    *pred_addr = rfp_pred_table[index].last_addr;
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+static void rfp_update_predictor(Op *op, Addr actual_addr) {
+  if (op == NULL || op->inst_info == NULL) {
+    return;
+  }
+
+  Addr pc = op->inst_info->addr;
+  uns index = pc % RFP_PRED_TABLE_SIZE;
+
+  rfp_pred_table[index].valid = TRUE;
+  rfp_pred_table[index].pc = pc;
+  rfp_pred_table[index].last_addr = actual_addr;
+}
+
 /**************************************************************************************/
 /* Inline Methods */
 
@@ -1894,23 +1933,25 @@ void reg_file_rename(Op *op) {
   // modifies pref_req_info in memory.h
 
   
-  if (op->rfp_eligible) { 
+  if (op->rfp_eligible) {
+    if (op->inst_info->table_info.mem_type != MEM_LD) {
+      return;
+    }
+    Addr actual_address = op->oracle_info.va;
+    Addr predicted_address = 0;
 
-    if (mem->l1_queue.entry_count > (mem->l1_queue.size / 2)) {
-            // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
-            return; // Skip the prefetch entirely
-        }
-      
-      // 2. Get oracle address
-      Addr oracle_address = op->oracle_info.va; 
-      
-      // 3. Get the physical register we just allocated
-      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
-      
-      // 4. Send the custom prefetch request
-      launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+    STAT_EVENT(map_data->proc_id, RFP_PREDICT_ATTEMPT);
+
+    if (rfp_predict_addr(op, &predicted_address)) {
+      STAT_EVENT(map_data->proc_id, RFP_PREDICT_HIT);
+      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+      launch_l1_to_rf_prefetch(predicted_address, phys_reg, op);
       STAT_EVENT(map_data->proc_id, RFP_INJECTED);
+    }
+
+    rfp_update_predictor(op, actual_address);
   }
+
   
   
   }
