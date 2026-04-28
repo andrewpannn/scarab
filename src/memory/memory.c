@@ -3037,7 +3037,7 @@ static Mem_Req* mem_kick_out_prefetch_from_queue(uns mem_bank, Mem_Queue* queue,
       for (ii = 0; ii < queue->entry_count; ii++) {
         Mem_Req* req = &(mem->req_buffer[queue->base[ii].reqbuf]);
         if (req->type != MRT_IPRF && req->type != MRT_DPRF && req->type != MRT_UOCPRF && req->type != MRT_FDIPPRFON &&
-            req->type != MRT_FDIPPRFOFF)
+            req->type != MRT_FDIPPRFOFF && req->type != MRT_RFP)
           continue;
         if (oldest_req_age > req->start_cycle && mem_bank == req->mem_flat_bank) {
           if (req->state < MRS_MEM_WAIT) {
@@ -3531,7 +3531,7 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
     }
   } else {
     if (queue_full(&mem->l1_queue) ||
-        ((type == MRT_IPRF || type == MRT_DPRF) && queue_num_free(&mem->l1_queue) <= MEM_REQ_BUFFER_PREF_WATERMARK)) {
+        ((type == MRT_IPRF || type == MRT_DPRF || type == MRT_RFP) && queue_num_free(&mem->l1_queue) <= MEM_REQ_BUFFER_PREF_WATERMARK)) {
       STAT_EVENT(proc_id, REJECTED_QUEUE_L1);
       return FALSE;
     }
@@ -3552,7 +3552,7 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
             "we use is wrong. Instead, we need a way to get "
             "the bank of the request from Ramulator");
     if (KICKOUT_PREFETCHES && (type != MRT_IPRF) && (type != MRT_DPRF) && (type != MRT_UOCPRF) &&
-        (type != MRT_FDIPPRFON) && (type != MRT_FDIPPRFOFF)) {
+        (type != MRT_FDIPPRFON) && (type != MRT_FDIPPRFOFF) && (type != MRT_RFP)) {
       if (!KICKOUT_LOOK_FOR_OLDEST_FIRST)
         new_req = mem_kick_out_prefetch_from_queues(
             BANK(addr, RAMULATOR_BANKS * RAMULATOR_CHANNELS, VA_PAGE_SIZE_BYTES), new_priority,

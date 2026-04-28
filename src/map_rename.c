@@ -1896,20 +1896,21 @@ void reg_file_rename(Op *op) {
   
   if (op->rfp_eligible) { 
 
-    if (mem->l1_queue.entry_count > (mem->l1_queue.size / 2)) {
+    if ((mem->l1_queue.entry_count > (mem->l1_queue.size / 2))
+          || mem->req_count > MEM_REQ_BUF_THRESHOLD) {
             // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
             return; // Skip the prefetch entirely
-        }
-      
-      // 2. Get oracle address
-      Addr oracle_address = op->oracle_info.va; 
-      
-      // 3. Get the physical register we just allocated
-      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
-      
-      // 4. Send the custom prefetch request
-      launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
-      STAT_EVENT(map_data->proc_id, RFP_INJECTED);
+    }
+    
+    // 2. Get oracle address
+    Addr oracle_address = op->oracle_info.va; 
+    
+    // 3. Get the physical register we just allocated
+    int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
+    
+    // 4. Send the custom prefetch request
+    launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+    STAT_EVENT(map_data->proc_id, RFP_INJECTED);
   }
   
   
