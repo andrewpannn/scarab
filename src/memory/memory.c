@@ -283,7 +283,7 @@ void init_mem_req_type_priorities() {
         priority = least_priority + 1;
         break;
       case MRT_RFP:
-        priority = least_priority;
+        priority = MEM_PRIORITY_RFP;
         break;
       default:
         FATAL_ERROR(0, "Priority for mem req type %s not specified\n", Mem_Req_Type_str(type));
