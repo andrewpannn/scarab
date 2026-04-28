@@ -3410,8 +3410,12 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
       priority_offset = 0;
   }
 
-  new_priority = Mem_Req_Priority_Offset[type] + priority_offset;
+  if (type == MRT_RFP) {
+    priority_offset = 0;
+  }
 
+  new_priority = Mem_Req_Priority_Offset[type] + priority_offset;
+  
   /* Step 1: Figure out if this access is already in the request buffer */
   // Search ramulator queue
   matching_req = mem_search_reqbuf(proc_id, addr, type, size, &demand_hit_prefetch, &demand_hit_writeback,

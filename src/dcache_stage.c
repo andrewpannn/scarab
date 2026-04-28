@@ -263,8 +263,6 @@ void update_dcache_stage(Stage_Data* src_sd) {
                 wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
             }
 
-            //dc->sd.ops[oldest_index] = NULL;
-            //dc->sd.op_count--;
             continue;
         }
         // ASSERT(dc->proc_id, get_rfp_state(op->unique_num) == RFP_PENDING);
