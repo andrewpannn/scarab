@@ -1976,19 +1976,19 @@ void reg_file_rename(Op *op) {
     STAT_EVENT(map_data->proc_id, RFP_PREDICT_ATTEMPT);
 
     if (rfp_predict_addr(op, &predicted_address)) {
-    STAT_EVENT(map_data->proc_id, RFP_PREDICT_HIT);
+      STAT_EVENT(map_data->proc_id, RFP_PREDICT_HIT);
 
-    if (predicted_address == op->oracle_info.va) {
-      STAT_EVENT(map_data->proc_id, RFP_ADDR_MATCH);
+      if (predicted_address == op->oracle_info.va) {
+        STAT_EVENT(map_data->proc_id, RFP_ADDR_MATCH);
+      }
+      if (get_proc_id_from_cmp_addr(predicted_address) == op->proc_id) {
+        int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+        launch_l1_to_rf_prefetch(predicted_address, phys_reg, op);
+        STAT_EVENT(map_data->proc_id, RFP_INJECTED);
+      } else {
+        STAT_EVENT(map_data->proc_id, RFP_MATCHED_AND_DROPPED);
+      }
     }
-    if (get_proc_id_from_cmp_addr(predicted_address) == op->proc_id) {
-      int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
-      launch_l1_to_rf_prefetch(predicted_address, phys_reg, op);
-      STAT_EVENT(map_data->proc_id, RFP_INJECTED);
-    } else {
-      STAT_EVENT(map_data->proc_id, RFP_MATCHED_AND_DROPPED);
-    }
-  }
 
     rfp_update_predictor(op, actual_address);
   }
