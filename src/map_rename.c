@@ -1967,6 +1967,13 @@ void reg_file_rename(Op *op) {
 
   
   if (op->rfp_eligible) {
+    //mem request
+    if ((mem->l1_queue.entry_count > (mem->l1_queue.size / 2))
+          || mem->req_count > MEM_REQ_BUF_THRESHOLD) {
+            // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+            return; // Skip the prefetch entirely
+        }
+
     if (op->inst_info->table_info.mem_type != MEM_LD) {
       return;
     }
