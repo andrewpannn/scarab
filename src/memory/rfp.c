@@ -1,5 +1,9 @@
 #include "rfp.h"
 #include "memory/memory.h"
+#include "memory/memory.param.h"
+#include "libs/cache_lib.h"    // For cache_access
+#include "dcache_stage.h"      // For Dcache_Stage and ports
+#include "cmp_model.h"         // For cmp_model.dcache_stage
 #include "statistics.h"
 
 // Parameters - These could be moved to your param file later
@@ -26,44 +30,66 @@ RFP_State get_rfp_state(Counter unique_num) {
     return RFP_NONE; 
 }
 
+// Parameters (usually defined in memory.param.h, but used here for bank calc)
+extern L1_Data* l1_pref_cache_access(Mem_Req* req); 
+
 void rfp_try_schedule(Op* op) {
     if (!op->rfp_eligible) return;
 
     uns proc_id = op->proc_id;
+    Addr oracle_addr = op->oracle_info.va;
+    
+    // 1. Initialize the local 'dc' pointer for this core
+    // This allows us to use dc->dcache and dc->ports
+    set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
 
-    // 1. Admission Control (Throttling)
+    // 2. Updated Bank Calculation
+    // Uses dc->dcache.shift_bits instead of L1_LINE_SIZE
+    // and N_BIT_MASK instead of the % operator for speed
+    uns bank = (oracle_addr >> dc->dcache.shift_bits) & N_BIT_MASK(LOG2(DCACHE_BANKS));
+
+    // 3. Check for Port Availability
+    if (!get_read_port(&dc->ports[bank])) {
+        STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
+        return; 
+    }
+
+    // 4. Access the Cache (Probe)
+    Addr dummy_line_addr;
+    Dcache_Data* dc_hit = (Dcache_Data*)cache_access(&dc->dcache, oracle_addr, &dummy_line_addr, FALSE);
+
+    if (dc_hit) {
+        rfp_mark_completed(op->unique_num);
+        STAT_EVENT(proc_id, RFP_PROBE_HIT);
+        return;
+    }
+
+    // MISS: Data is not in L1. Proceed with injection logic.
+    STAT_EVENT(proc_id, RFP_PROBE_MISS);
+
+    // --- ADMISSION CONTROL & INJECTION ---
     if (rfp_is_system_too_busy(proc_id)) {
         STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
         return; 
     }
 
-    // 2. Prepare Prefetch Info
-    // Note: Ensure your Pref_Req_Info struct in memory.h has these fields
     Pref_Req_Info pref_info = {0};
     pref_info.dest = DEST_L1;
-    pref_info.is_l1_to_rf_pref = TRUE;
-    // pref_info.rfp_op = op; 
-    pref_info.dest_phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+    // ... other pref_info fields ...
 
-    // 3. Blind Injection
-    Addr oracle_addr = op->oracle_info.va;
-    
-    // We use MRT_RFP so the memory system knows this is high priority
     Flag success = new_mem_req(MRT_RFP, 
                                proc_id, 
                                oracle_addr, 
-                               64,      // Size (64-byte line)
-                               0,       // Delay
-                               NULL,    // Op (passed NULL to prevent normal completion logic)
-                               NULL,    // Done function
+                               64, 
+                               0, 
+                               NULL, 
+                               NULL, 
                                op->unique_num, 
                                &pref_info);
 
     if (success) {
         set_rfp_state(op->unique_num, RFP_PENDING);
         STAT_EVENT(proc_id, RFP_INJECTED);
-    } else {
-        STAT_EVENT(proc_id, RFP_INJECTION_FAILED);
     }
 }
 
