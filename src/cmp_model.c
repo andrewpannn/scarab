@@ -29,6 +29,7 @@
 /**************************************************************************************/
 
 #include "cmp_model.h"
+#include "memory/rfp.h"
 
 #include "globals/assert.h"
 
@@ -242,6 +243,9 @@ void cmp_cores(void) {
       update_exec_stage(&node->sd);
       update_node_stage(map->last_sd);
       update_map_stage(idq_stage_get_stage_data());
+
+      // RFP
+      rfp_advance_queue();
 
       if (UOP_CACHE_ENABLE) {
         /* IDQ stage that bridges the front-end and back-end */

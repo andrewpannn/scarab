@@ -32,44 +32,39 @@ RFP_State get_rfp_state(Counter unique_num) {
 
 // Parameters (usually defined in memory.param.h, but used here for bank calc)
 extern L1_Data* l1_pref_cache_access(Mem_Req* req); 
+RFP_Queue_Entry rfp_queue[RFP_QUEUE_SIZE];
 
 void rfp_try_schedule(Op* op) {
     if (!op->rfp_eligible) return;
 
+    for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+        int prio = !op->oracle_info.l1_miss ? 0 : op->unique_num;
+        if (!rfp_queue[i].valid) {
+            rfp_queue[i].addr = op->oracle_info.va;
+            rfp_queue[i].unique_num = op->unique_num;
+            rfp_queue[i].proc_id = op->proc_id;
+            rfp_queue[i].phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+            rfp_queue[i].op_unique_num = prio; // Priority key
+            rfp_queue[i].valid = TRUE;
+            
+            STAT_EVENT(op->proc_id, RFP_QUEUED);
+            return;
+        }
+    }
+    STAT_EVENT(op->proc_id, RFP_QUEUE_FULL);
+
+}
+
+void send_rfp(Op* op) {
     uns proc_id = op->proc_id;
     Addr oracle_addr = op->oracle_info.va;
-    
-    // 1. Initialize the local 'dc' pointer for this core
-    // This allows us to use dc->dcache and dc->ports
-    set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
 
-    // 2. Updated Bank Calculation
-    // Uses dc->dcache.shift_bits instead of L1_LINE_SIZE
-    // and N_BIT_MASK instead of the % operator for speed
-    uns bank = (oracle_addr >> dc->dcache.shift_bits) & N_BIT_MASK(LOG2(DCACHE_BANKS));
-
-    // 3. Check for Port Availability
-    if (!get_read_port(&dc->ports[bank])) {
-        STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
-        return; 
-    }
-
-    // 1. Admission Control (Throttling)
-    if (rfp_is_system_too_busy(proc_id)) {
-        STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
-        return; 
-    }
-
-    // 2. Prepare Prefetch Info
-    // Note: Ensure your Pref_Req_Info struct in memory.h has these fields
+    // Prepare Prefetch Info
     Pref_Req_Info pref_info = {0};
     pref_info.dest = DEST_L1;
     pref_info.is_l1_to_rf_pref = TRUE;
-    // pref_info.rfp_op = op; 
     pref_info.dest_phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
 
-    
-    // We use MRT_RFP so the memory system knows this is high priority
     Flag success = new_mem_req(MRT_RFP, 
                                proc_id, 
                                oracle_addr, 
@@ -106,4 +101,60 @@ Flag rfp_is_system_too_busy(uns proc_id) {
 void rfp_mark_completed(Counter unique_num) {
     // Centralized place to update state
     set_rfp_state(unique_num, RFP_COMPLETED);
+}
+
+Flag rfp_available_send(void) {
+    uns bank = 0;
+    uns proc_id = 0;
+    set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
+
+    // Check for Port Availability
+    if (!get_read_port(&dc->ports[bank])) {
+        STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
+        return false; 
+    }
+
+    // Admission Control (Throttling)
+    if (rfp_is_system_too_busy(proc_id)) {
+        STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+        return false; 
+    }
+    return true;
+}
+ 
+// --- 2. ISSUE FROM QUEUE (The new logic) ---
+void rfp_advance_queue() {
+    // We only try to issue if the system isn't too busy
+    // You can also limit bandwidth here (e.g., only 1 issue per cycle)
+    // uns proc_id = 0; // Assume single core or loop through cores
+
+    while (rfp_available_send()) {
+        int best_idx = -1; 
+        Counter oldest_unq = 0xFFFFFFFFFFFFFFFFULL;
+
+        // Search for the highest priority (oldest) valid request
+        for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+            if (rfp_queue[i].valid && rfp_queue[i].op_unique_num < oldest_unq) {
+                oldest_unq = rfp_queue[i].op_unique_num;
+                best_idx = i;
+            }
+        }
+
+        if (best_idx != -1) {
+            RFP_Queue_Entry* req = &rfp_queue[best_idx];
+            
+            Pref_Req_Info pref_info = {0};
+            pref_info.dest = DEST_L1;
+            pref_info.dest_phys_reg = req->phys_reg;
+
+            Flag success = new_mem_req(MRT_RFP, req->proc_id, req->addr, 64, 0, 
+                                    NULL, NULL, req->unique_num, &pref_info);
+
+            if (success) {
+                set_rfp_state(req->unique_num, RFP_PENDING);
+                req->valid = FALSE; // Remove from queue
+                STAT_EVENT(req->proc_id, RFP_ISSUED_FROM_QUEUE);
+            }
+        }
+    }
 }

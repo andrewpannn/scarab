@@ -14,6 +14,20 @@ typedef struct {
     RFP_State state;
 } RFP_Tracker_Entry;
 
+typedef struct RFP_Queue_Entry_struct {
+    Addr    addr;
+    Counter unique_num;
+    uns     proc_id;
+    int     phys_reg;
+    Counter op_unique_num; // Used for sorting (older = higher priority)
+    Flag    valid;
+} RFP_Queue_Entry;
+
+#define RFP_QUEUE_SIZE 1024
+
+// Called once per cycle from the simulator's main loop (e.g., in update_memory)
+void rfp_advance_queue(void);
+
 extern RFP_Tracker_Entry rfp_tracker[RFP_TRACKER_SIZE];
 
 /* --- Interface Functions --- */
@@ -29,5 +43,8 @@ void rfp_mark_completed(Counter unique_num);
 
 // Throttling helper
 Flag rfp_is_system_too_busy(uns proc_id);
+
+Flag rfp_available_send(void);
+void send_rfp(Op* op);
 
 #endif // __RFP_H__
