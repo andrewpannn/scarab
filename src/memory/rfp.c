@@ -33,69 +33,163 @@ RFP_State get_rfp_state(Counter unique_num) {
 // Parameters (usually defined in memory.param.h, but used here for bank calc)
 extern L1_Data* l1_pref_cache_access(Mem_Req* req); 
 
+#define RFP_PRED_TABLE_SIZE 1024
+#define RFP_CONF_THRESHOLD 2
+#define RFP_MAX_CONF 3
+
+typedef struct RFP_Pred_Entry {
+  Flag valid;
+  Addr pc;
+  Addr prev_addr;
+  Addr last_addr;
+  int64 stride;
+  uns confidence;
+} RFP_Pred_Entry;
+
+static RFP_Pred_Entry rfp_pred_table[RFP_PRED_TABLE_SIZE];
+
+static Flag rfp_predict_addr(Op *op, Addr *pred_addr) {
+  if (op == NULL || op->inst_info == NULL) {
+    return FALSE;
+  }
+
+  Addr pc = op->inst_info->addr;
+  uns index = pc % RFP_PRED_TABLE_SIZE;
+  RFP_Pred_Entry *entry = &rfp_pred_table[index];
+
+  if (entry->stride == 0) {
+    return FALSE;
+  }
+  if (!entry->valid || entry->pc != pc) {
+    return FALSE;
+  }
+
+  if (entry->confidence < RFP_CONF_THRESHOLD) {
+    return FALSE;
+  }
+
+  *pred_addr = (Addr)((int64)entry->last_addr + entry->stride);
+  return TRUE;
+}
+
+static void rfp_update_predictor(Op *op, Addr actual_addr) {
+  if (op == NULL || op->inst_info == NULL) {
+    return;
+  }
+
+  Addr pc = op->inst_info->addr;
+  uns index = pc % RFP_PRED_TABLE_SIZE;
+  RFP_Pred_Entry *entry = &rfp_pred_table[index];
+
+  if (!entry->valid || entry->pc != pc) {
+    entry->valid = TRUE;
+    entry->pc = pc;
+    entry->prev_addr = actual_addr;
+    entry->last_addr = actual_addr;
+    entry->stride = 0;
+    entry->confidence = 0;
+    return;
+  }
+
+  int64 new_stride = (int64)actual_addr - (int64)entry->last_addr;
+
+  if (new_stride == entry->stride) {
+    if (entry->confidence < RFP_MAX_CONF) {
+      entry->confidence++;
+    }
+  } else {
+    if (entry->confidence > 0) {
+      entry->confidence--;
+    }
+    entry->stride = new_stride;
+  }
+
+  entry->prev_addr = entry->last_addr;
+  entry->last_addr = actual_addr;
+}
+
+
 void rfp_try_schedule(Op* op) {
-    if (!op->rfp_eligible) return;
+  if (!op) return;
+  if (!op->rfp_eligible) return;
+  if (!op->inst_info) return;
+  if (op->inst_info->table_info.mem_type != MEM_LD) return;
 
-    uns proc_id = op->proc_id;
-    Addr oracle_addr = op->oracle_info.va;
-    
-    // 1. Initialize the local 'dc' pointer for this core
-    // This allows us to use dc->dcache and dc->ports
-    set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
+  uns proc_id = op->proc_id;
+  Addr actual_addr = op->oracle_info.va;
+  Addr predicted_addr = 0;
+  STAT_EVENT(proc_id, RFP_PREDICT_ATTEMPT);
 
-    // 2. Updated Bank Calculation
-    // Uses dc->dcache.shift_bits instead of L1_LINE_SIZE
-    // and N_BIT_MASK instead of the % operator for speed
-    uns bank = (oracle_addr >> dc->dcache.shift_bits) & N_BIT_MASK(LOG2(DCACHE_BANKS));
+  if (!rfp_predict_addr(op, &predicted_addr)) {
+    rfp_update_predictor(op, actual_addr);
+    return;
+  }
+    STAT_EVENT(proc_id, RFP_PREDICT_HIT);
 
-    // 3. Check for Port Availability
-    if (!get_read_port(&dc->ports[bank])) {
-        STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
-        return; 
-    }
+  if (get_proc_id_from_cmp_addr(predicted_addr) != proc_id) {
+    rfp_update_predictor(op, actual_addr);
+    return;
+  }
 
-    // 4. Access the Cache (Probe)
-    Addr dummy_line_addr;
-    Dcache_Data* dc_hit = (Dcache_Data*)cache_access(&dc->dcache, oracle_addr, &dummy_line_addr, FALSE);
+  set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
 
-    if (dc_hit) {
-        rfp_mark_completed(op->unique_num);
-        STAT_EVENT(proc_id, RFP_PROBE_HIT);
-        return;
-    }
+  uns bank = (predicted_addr >> dc->dcache.shift_bits) &
+             N_BIT_MASK(LOG2(DCACHE_BANKS));
 
-    // MISS: Data is not in L1. Proceed with injection logic.
-    STAT_EVENT(proc_id, RFP_PROBE_MISS);
+  if (!get_read_port(&dc->ports[bank])) {
+    STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
+    rfp_update_predictor(op, actual_addr);
+    return;
+  }
 
-    // --- ADMISSION CONTROL & INJECTION ---
-    if (rfp_is_system_too_busy(proc_id)) {
-        STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
-        return; 
-    }
+  Addr dummy_line_addr;
+  Dcache_Data* dc_hit =
+      (Dcache_Data*)cache_access(&dc->dcache,
+                                 predicted_addr,
+                                 &dummy_line_addr,
+                                 FALSE);
 
-    Pref_Req_Info pref_info = {0};
-    pref_info.dest = DEST_L1;
-    // ... other pref_info fields ...
+  if (dc_hit) {
+    STAT_EVENT(proc_id, RFP_PROBE_HIT);
+    rfp_mark_completed(op->unique_num);
+    rfp_update_predictor(op, actual_addr);
+    return;
+  }
+  STAT_EVENT(proc_id, RFP_PROBE_MISS);
 
-    Flag success = new_mem_req(MRT_RFP, 
-                               proc_id, 
-                               oracle_addr, 
-                               64, 
-                               0, 
-                               NULL, 
-                               NULL, 
-                               op->unique_num, 
-                               &pref_info);
+  if (rfp_is_system_too_busy(proc_id)) {
+    STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+    rfp_update_predictor(op, actual_addr);
+    return;
+  }
 
-    if (success) {
-        set_rfp_state(op->unique_num, RFP_PENDING);
-        STAT_EVENT(proc_id, RFP_INJECTED);
-    }
+  Pref_Req_Info pref_info = {0};
+  pref_info.dest = DEST_L1;
+  pref_info.loadPC = op->inst_info ? op->inst_info->addr : 0;
+
+  Flag success = new_mem_req(MRT_RFP,
+                             proc_id,
+                             predicted_addr,
+                             64,
+                             0,
+                             NULL,
+                             NULL,
+                             op->unique_num,
+                             &pref_info);
+
+  if (success) {
+    set_rfp_state(op->unique_num, RFP_PENDING);
+    STAT_EVENT(proc_id, RFP_INJECTED);
+  }else{
+    STAT_EVENT(proc_id, RFP_INJECTION_FAILED);
+  }
+
+  rfp_update_predictor(op, actual_addr);
 }
 
 Flag rfp_is_system_too_busy(uns proc_id) {
     // Check global request buffer occupancy
-    uns total_used = mem_get_req_count(proc_id);
+    uns total_used = mem->req_count;
     if (total_used > (MEM_REQ_BUFFER_ENTRIES - RFP_DEMAND_RESERVE)) {
         return TRUE;
     }
