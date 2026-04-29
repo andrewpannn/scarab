@@ -29,6 +29,7 @@
  ***************************************************************************************/
 
 #include "dcache_stage.h"
+#include "memory/rfp.h"
 
 #include "globals/assert.h"
 #include "globals/global_defs.h"

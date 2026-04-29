@@ -28,6 +28,7 @@
 /*** CMP  remov all the wrong path stuff  ***/
 
 #include "memory.h"
+#include "memory/rfp.h"
 
 #include <limits.h>
 
@@ -193,27 +194,6 @@ static inline uns queue_num_free(Mem_Queue* queue);
 Flag is_final_state(Mem_Req_State state);
 Flag is_inv_state(Mem_Req_State state);
 
-RFP_Tracker_Entry rfp_tracker[RFP_TRACKER_SIZE];
-
-void set_rfp_state(Counter unique_num, RFP_State state);
-RFP_State get_rfp_state(Counter unique_num);
-
-// --- TO INSERT / UPDATE ---
-void set_rfp_state(Counter unique_num, RFP_State state) {
-    uns index = unique_num % RFP_TRACKER_SIZE;
-    rfp_tracker[index].unique_num = unique_num;
-    rfp_tracker[index].state = state;
-}
-
-// --- TO CHECK ---
-RFP_State get_rfp_state(Counter unique_num) {
-    uns index = unique_num % RFP_TRACKER_SIZE;
-    // Verify this entry actually belongs to THIS instruction, not an old one
-    if (rfp_tracker[index].unique_num == unique_num) {
-        return rfp_tracker[index].state;
-    }
-    return RFP_NONE; 
-}
 
 /**************************************************************************************/
 /* set_memory: */
@@ -1769,6 +1749,9 @@ static void mem_process_l1_reqs() {
       if (req->type == MRT_DPRF || req->type == MRT_IPRF || req->type == MRT_UOCPRF || req->type == MRT_FDIPPRFON ||
           req->type == MRT_FDIPPRFOFF)
         STAT_EVENT(req->proc_id, L1_PREF_ACCESS);
+      else if (req->type == MRT_RFP) {
+        STAT_EVENT(req->proc_id, L1_RFP_ACCESS);
+      }
       else
         STAT_EVENT(req->proc_id, L1_DEMAND_ACCESS);
     } else {
@@ -3415,6 +3398,24 @@ Flag new_mem_req(Mem_Req_Type type, uns8 proc_id, Addr addr, uns size, uns delay
   }
 
   new_priority = Mem_Req_Priority_Offset[type] + priority_offset;
+
+  // if (type == MRT_RFP) {
+  // printf("[RFP_DEBUG] cycle=%llu addr=0x%llx "
+  //          "reqbuf_used=%d reqbuf_free=%d "
+  //          "l1q=%d mlcq=%d busoutq=%d l1fillq=%d mlcfillq=%d "
+  //          "new_priority=%llu\n",
+  //          (unsigned long long)cycle_count,
+  //          (unsigned long long)addr,
+  //          mem->req_count,
+  //          mem->req_buffer_free_list.count,
+  //          mem->l1_queue.entry_count,
+  //          mem->mlc_queue.entry_count,
+  //          mem->bus_out_queue.entry_count,
+  //          mem->l1fill_queue.entry_count,
+  //          mem->mlc_fill_queue.entry_count,
+  //          (unsigned long long)new_priority);
+  
+  // }
   
   /* Step 1: Figure out if this access is already in the request buffer */
   // Search ramulator queue

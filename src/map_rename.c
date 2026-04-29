@@ -28,6 +28,7 @@
  ***************************************************************************************/
 
 #include "map_rename.h"
+#include "memory/rfp.h"
 
 #include "globals/assert.h"
 #include "globals/global_defs.h"
@@ -1851,20 +1852,20 @@ void launch_l1_to_rf_prefetch(Addr perfect_address, int phys_reg, Op* op) {
 }
 
 // Called in memory.c
-void mark_rf_prefetch_produced(int proc_id, int phys_reg) {
-    // 1. Navigate through the structs to get to the Physical Table
-    // (Assuming we are dealing with General Purpose INT registers)
-    struct reg_table *phys_table = map_data->reg_file[REG_FILE_REG_TYPE_GENERAL_PURPOSE]->reg_table[REG_TABLE_TYPE_PHYSICAL];
+// void mark_rf_prefetch_produced(int proc_id, int phys_reg) {
+//     // 1. Navigate through the structs to get to the Physical Table
+//     // (Assuming we are dealing with General Purpose INT registers)
+//     struct reg_table *phys_table = map_data->reg_file[REG_FILE_REG_TYPE_GENERAL_PURPOSE]->reg_table[REG_TABLE_TYPE_PHYSICAL];
 
-    // 2. Index into the array using your custom physical register ID
-    struct reg_table_entry *entry = &phys_table->entries[phys_reg];
+//     // 2. Index into the array using your custom physical register ID
+//     struct reg_table_entry *entry = &phys_table->entries[phys_reg];
 
-    // 3. Flip the state and wake up dependent instructions!
-    if (entry->reg_state == REG_TABLE_ENTRY_STATE_ALLOC) {
-        entry->reg_state = REG_TABLE_ENTRY_STATE_PRODUCED;
-        entry->produced_cycle = cycle_count;
-    }
-}
+//     // 3. Flip the state and wake up dependent instructions!
+//     if (entry->reg_state == REG_TABLE_ENTRY_STATE_ALLOC) {
+//         entry->reg_state = REG_TABLE_ENTRY_STATE_PRODUCED;
+//         entry->produced_cycle = cycle_count;
+//     }
+// }
 
 /*
   Called by:
@@ -1896,20 +1897,21 @@ void reg_file_rename(Op *op) {
   
   if (op->rfp_eligible) { 
 
-    if ((mem->l1_queue.entry_count > (mem->l1_queue.size / 2))
-          || mem->req_count > MEM_REQ_BUF_THRESHOLD) {
-            // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
-            return; // Skip the prefetch entirely
-    }
+    // if ((mem->l1_queue.entry_count > (mem->l1_queue.size / 2))
+    //       || mem->req_count > MEM_REQ_BUF_THRESHOLD) {
+    //         // STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+    //         return; // Skip the prefetch entirely
+    // }
     
-    // 2. Get oracle address
-    Addr oracle_address = op->oracle_info.va; 
+    // // 2. Get oracle address
+    // Addr oracle_address = op->oracle_info.va; 
     
-    // 3. Get the physical register we just allocated
-    int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
+    // // 3. Get the physical register we just allocated
+    // int phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];   
     
-    // 4. Send the custom prefetch request
-    launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+    // // 4. Send the custom prefetch request
+    // launch_l1_to_rf_prefetch(oracle_address, phys_reg, op); 
+    rfp_try_schedule(op);
     STAT_EVENT(map_data->proc_id, RFP_INJECTED);
   }
   
