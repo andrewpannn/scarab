@@ -48,4 +48,6 @@ Flag rfp_is_system_too_busy(uns proc_id);
 Flag rfp_available_send(void);
 void send_rfp(Op* op);
 
+void default_rfp(Op* op);
+
 #endif // __RFP_H__

@@ -35,8 +35,70 @@ RFP_State get_rfp_state(Counter unique_num) {
 extern L1_Data* l1_pref_cache_access(Mem_Req* req); 
 RFP_Queue_Entry rfp_queue[RFP_QUEUE_SIZE];
 
+void default_rfp(Op* op) {
+    if (!op->rfp_eligible) return;
+
+    uns proc_id = op->proc_id;
+    Addr oracle_addr = op->oracle_info.va;
+    
+    // 1. Initialize the local 'dc' pointer for this core
+    // This allows us to use dc->dcache and dc->ports
+    set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
+
+    // 2. Updated Bank Calculation
+    // Uses dc->dcache.shift_bits instead of L1_LINE_SIZE
+    // and N_BIT_MASK instead of the % operator for speed
+    uns bank = (oracle_addr >> dc->dcache.shift_bits) & N_BIT_MASK(LOG2(DCACHE_BANKS));
+
+    // 3. Check for Port Availability
+    if (!get_read_port(&dc->ports[bank])) {
+        STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
+        return; 
+    }
+
+    // 1. Admission Control (Throttling)
+    if (rfp_is_system_too_busy(proc_id)) {
+        STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
+        return; 
+    }
+
+    // 2. Prepare Prefetch Info
+    // Note: Ensure your Pref_Req_Info struct in memory.h has these fields
+    Pref_Req_Info pref_info = {0};
+    pref_info.dest = DEST_L1;
+    pref_info.is_l1_to_rf_pref = TRUE;
+    // pref_info.rfp_op = op; 
+    pref_info.dest_phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+
+    
+    // We use MRT_RFP so the memory system knows this is high priority
+    Flag success = new_mem_req(MRT_RFP, 
+                               proc_id, 
+                               oracle_addr, 
+                               64,      // Size (64-byte line)
+                               0,       // Delay
+                               NULL,    // Op (passed NULL to prevent normal completion logic)
+                               NULL,    // Done function
+                               op->unique_num, 
+                               &pref_info);
+
+    if (success) {
+        set_rfp_state(op->unique_num, RFP_PENDING);
+        STAT_EVENT(proc_id, RFP_INJECTED);
+    } else {
+        STAT_EVENT(proc_id, RFP_INJECTION_FAILED);
+    }
+}
+
+
+
 void rfp_try_schedule(Op* op) {
     if (!op->rfp_eligible) return;
+
+    if (RFP_DISABLE_QUEUE) {
+        default_rfp(op);
+        return;
+    }
 
     for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
 
@@ -46,6 +108,9 @@ void rfp_try_schedule(Op* op) {
 
             if (RFP_HIT_PREDICTOR) {
                 prio = predict_l1_hit(addr);
+                if (prio == !op->oracle_info.l1_miss) {
+                    STAT_EVENT(op->proc_id, HIT_PRED_ACCURATE);
+                }
             } else {
                 prio = !op->oracle_info.l1_miss;
             }

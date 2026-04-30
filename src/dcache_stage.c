@@ -255,23 +255,25 @@ void update_dcache_stage(Stage_Data* src_sd) {
     // ==========================================================
     // RFP addition
     // Inside update_dcache_stage (dcache_stage.c)
-    if (op->rfp_eligible) {
-        if (get_rfp_state(op->unique_num) == RFP_COMPLETED) {
-            // Fast path - data already arrived
-            STAT_EVENT(op->proc_id, RFP_USEFUL);
-            op->done_cycle = cycle_count;
-            op->dcache_cycle = cycle_count;
-            op->oracle_info.dcmiss = FALSE;
+    if (!RFP_DISABLE_DCACHE_FAST) {
+      if (op->rfp_eligible) {
+          if (get_rfp_state(op->unique_num) == RFP_COMPLETED) {
+              // Fast path - data already arrived
+              STAT_EVENT(op->proc_id, RFP_USEFUL);
+              op->done_cycle = cycle_count;
+              op->dcache_cycle = cycle_count;
+              op->oracle_info.dcmiss = FALSE;
 
-            if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
-                op->wake_cycle = cycle_count;
-                wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
-            }
+              if (op->inst_info->table_info.mem_type != MEM_ST && !op->wake_up_signaled[REG_DATA_DEP]) {
+                  op->wake_cycle = cycle_count;
+                  wake_up_ops(op, REG_DATA_DEP, model->wake_hook);
+              }
 
-            continue;
-        }
-        // ASSERT(dc->proc_id, get_rfp_state(op->unique_num) == RFP_PENDING);
-        STAT_EVENT(op->proc_id, RFP_NOT_USEFUL);
+              continue;
+          }
+          // ASSERT(dc->proc_id, get_rfp_state(op->unique_num) == RFP_PENDING);
+          STAT_EVENT(op->proc_id, RFP_NOT_USEFUL);
+      }
     }
 
     // ideal l2 l1 prefetcher bring l1 data immediately
