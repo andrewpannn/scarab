@@ -39,6 +39,7 @@ void rfp_try_schedule(Op* op) {
 
     for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
         int prio = !op->oracle_info.l1_miss ? 0 : op->unique_num;
+        //int prio = op->unique_num;
         if (!rfp_queue[i].valid) {
             rfp_queue[i].addr = op->oracle_info.va;
             rfp_queue[i].unique_num = op->unique_num;
