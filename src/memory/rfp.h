@@ -21,6 +21,7 @@ typedef struct RFP_Queue_Entry_struct {
     int     phys_reg;
     Counter op_unique_num; // Used for sorting (older = higher priority)
     Flag    valid;
+    Flag    priority; // two tier priority queue
 } RFP_Queue_Entry;
 
 #define RFP_QUEUE_SIZE 1024

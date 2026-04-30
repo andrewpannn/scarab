@@ -38,16 +38,19 @@ void rfp_try_schedule(Op* op) {
     if (!op->rfp_eligible) return;
 
     for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
-        int prio = !op->oracle_info.l1_miss ? 0 : op->unique_num;
-        //int prio = op->unique_num;
+
         if (!rfp_queue[i].valid) {
             rfp_queue[i].addr = op->oracle_info.va;
             rfp_queue[i].unique_num = op->unique_num;
             rfp_queue[i].proc_id = op->proc_id;
             rfp_queue[i].phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
-            rfp_queue[i].op_unique_num = prio; // Priority key
+            rfp_queue[i].op_unique_num = op->unique_num; // Priority key
             rfp_queue[i].valid = TRUE;
+            rfp_queue[i].priority = !op->oracle_info.l1_miss;
             
+            if (!RFP_FIFO) {
+                rfp_queue[i].op_unique_num = !op->oracle_info.l1_miss ? 0 : op->unique_num;
+            }
             STAT_EVENT(op->proc_id, RFP_QUEUED);
             return;
         }
@@ -132,13 +135,34 @@ void rfp_advance_queue() {
     while (rfp_available_send()) {
         int best_idx = -1; 
         Counter oldest_unq = 0xFFFFFFFFFFFFFFFFULL;
+        Flag found_hit = FALSE;
 
         // Search for the highest priority (oldest) valid request
-        for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
-            if (rfp_queue[i].valid && rfp_queue[i].op_unique_num < oldest_unq) {
-                oldest_unq = rfp_queue[i].op_unique_num;
-                best_idx = i;
+        if (RFP_FIFO) {
+            for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+                // Search for the highest priority (oldest) valid request
+                if (rfp_queue[i].priority && !found_hit && rfp_queue[i].valid) {
+                    found_hit = TRUE;
+                    best_idx = i;
+                    oldest_unq = rfp_queue[i].op_unique_num;
+                }
+                
+                // CASE 2: Comparing apples to apples (Both Hits OR Both Misses)
+                else if (rfp_queue[i].priority == found_hit) {
+                    // Break ties using strict FIFO (oldest unique_num wins)
+                    if (rfp_queue[i].valid && rfp_queue[i].op_unique_num < oldest_unq) {
+                        best_idx = i;
+                        oldest_unq = rfp_queue[i].op_unique_num;
+                    }
+                }
             }
+        } else {
+            for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+                if ((rfp_queue[i].valid && rfp_queue[i].op_unique_num < oldest_unq) ) {
+                    oldest_unq = rfp_queue[i].op_unique_num;
+                    best_idx = i;
+                }
+        }
         }
 
         if (best_idx != -1) {
