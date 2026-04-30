@@ -30,6 +30,7 @@
 
 #include "dcache_stage.h"
 #include "memory/rfp.h"
+#include "memory/hit_pred.h"
 
 #include "globals/assert.h"
 #include "globals/global_defs.h"
@@ -123,6 +124,9 @@ void init_dcache_stage(uns8 proc_id, const char* name) {
                sizeof(Dcache_Data), DCACHE_REPL);
 
   memset(dc->rand_wb_state, 0, NUM_ELEMENTS(dc->rand_wb_state));
+
+  //RFP
+  init_hit_predictor();
 }
 
 void reset_dcache_stage(void) {

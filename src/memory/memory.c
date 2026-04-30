@@ -29,6 +29,7 @@
 
 #include "memory.h"
 #include "memory/rfp.h"
+#include "memory/hit_pred.h"
 
 #include <limits.h>
 
@@ -1064,7 +1065,13 @@ Flag mem_process_l1_hit_access(Mem_Req* req, Mem_Queue_Entry* l1_queue_entry, Ad
   
   if (req->type == MRT_RFP) {
     set_rfp_state(req->unique_num, RFP_COMPLETED);
+
+    if (RFP_HIT_PREDICTOR) {
+      train_l1_hit_predictor(req->addr, true);
+    }
   }
+
+
 
   return TRUE;
 }
@@ -4347,6 +4354,10 @@ Flag l1_fill_line(Mem_Req* req) {
       // You might also want to prevent normal wake-up logic for RFPs here, 
       // since the tracker handles it.
   }
+  if (RFP_HIT_PREDICTOR) {
+      train_l1_hit_predictor(req->addr, true);
+  }
+  
   // ==========================================
   // ==========================================
   return SUCCESS;

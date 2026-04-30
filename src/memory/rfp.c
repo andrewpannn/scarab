@@ -1,4 +1,5 @@
-#include "rfp.h"
+#include "memory/rfp.h"
+#include "memory/hit_pred.h"
 #include "memory/memory.h"
 #include "memory/memory.param.h"
 #include "libs/cache_lib.h"    // For cache_access
@@ -40,16 +41,25 @@ void rfp_try_schedule(Op* op) {
     for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
 
         if (!rfp_queue[i].valid) {
+            int prio;
+            int addr = op->oracle_info.va;
+
+            if (RFP_HIT_PREDICTOR) {
+                prio = predict_l1_hit(addr);
+            } else {
+                prio = !op->oracle_info.l1_miss;
+            }
+
             rfp_queue[i].addr = op->oracle_info.va;
             rfp_queue[i].unique_num = op->unique_num;
             rfp_queue[i].proc_id = op->proc_id;
             rfp_queue[i].phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
             rfp_queue[i].op_unique_num = op->unique_num; // Priority key
             rfp_queue[i].valid = TRUE;
-            rfp_queue[i].priority = !op->oracle_info.l1_miss;
+            rfp_queue[i].priority = prio;
             
             if (!RFP_FIFO) {
-                rfp_queue[i].op_unique_num = !op->oracle_info.l1_miss ? 0 : op->unique_num;
+                rfp_queue[i].op_unique_num = prio ? 0 : op->unique_num;
             }
             STAT_EVENT(op->proc_id, RFP_QUEUED);
             return;
