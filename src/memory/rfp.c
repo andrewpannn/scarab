@@ -31,6 +31,94 @@ RFP_State get_rfp_state(Counter unique_num) {
     return RFP_NONE; 
 }
 
+#define RFP_PRED_TABLE_SIZE 1024
+#define RFP_CONF_THRESHOLD 2
+#define RFP_MAX_CONF 3
+
+
+typedef struct RFP_Pred_Entry {
+    Flag valid;
+    Addr pc;
+    Addr prev_addr;
+    Addr last_addr;
+    int64 stride;
+    uns confidence;
+} RFP_Pred_Entry;
+
+
+static RFP_Pred_Entry rfp_pred_table[RFP_PRED_TABLE_SIZE];
+
+
+static Flag rfp_predict_addr(Op *op, Addr *pred_addr) {
+    if (op == NULL || op->inst_info == NULL) {
+    return FALSE;
+    }
+
+
+    Addr pc = op->inst_info->addr;
+    uns index = pc % RFP_PRED_TABLE_SIZE;
+    RFP_Pred_Entry *entry = &rfp_pred_table[index];
+
+
+    if (entry->stride == 0) {
+    return FALSE;
+    }
+    if (!entry->valid || entry->pc != pc) {
+    return FALSE;
+    }
+
+
+    if (entry->confidence < RFP_CONF_THRESHOLD) {
+    return FALSE;
+    }
+
+
+    *pred_addr = (Addr)((int64)entry->last_addr + entry->stride);
+    return TRUE;
+    }
+
+
+static void rfp_update_predictor(Op *op, Addr actual_addr) {
+    if (op == NULL || op->inst_info == NULL) {
+        return;
+    }
+
+
+    Addr pc = op->inst_info->addr;
+    uns index = pc % RFP_PRED_TABLE_SIZE;
+    RFP_Pred_Entry *entry = &rfp_pred_table[index];
+
+
+    if (!entry->valid || entry->pc != pc) {
+        entry->valid = TRUE;
+        entry->pc = pc;
+        entry->prev_addr = actual_addr;
+        entry->last_addr = actual_addr;
+        entry->stride = 0;
+        entry->confidence = 0;
+        return;
+    }
+
+
+    int64 new_stride = (int64)actual_addr - (int64)entry->last_addr;
+
+
+    if (new_stride == entry->stride) {
+        if (entry->confidence < RFP_MAX_CONF) {
+            entry->confidence++;
+        }
+    } else {
+        if (entry->confidence > 0) {
+            entry->confidence--;
+        }
+        entry->stride = new_stride;
+    }
+
+    entry->prev_addr = entry->last_addr;
+    entry->last_addr = actual_addr;
+}
+
+
 // Parameters (usually defined in memory.param.h, but used here for bank calc)
 extern L1_Data* l1_pref_cache_access(Mem_Req* req); 
 RFP_Queue_Entry rfp_queue[RFP_QUEUE_SIZE];
@@ -39,7 +127,32 @@ void default_rfp(Op* op) {
     if (!op->rfp_eligible) return;
 
     uns proc_id = op->proc_id;
+    //Addr pred_addr = 0;
     Addr oracle_addr = op->oracle_info.va;
+    Addr rfp_addr = 0;
+
+    if (!RFP_USE_STRIDE) {
+        rfp_addr = op->oracle_info.va;
+    } else {
+        Addr actual = op->oracle_info.va;
+        Addr pred_addr = 0;
+
+        if (!rfp_predict_addr(op, &pred_addr)) {
+            rfp_update_predictor(op, actual);
+            return;
+        }
+
+       if (get_proc_id_from_cmp_addr(pred_addr) != op->proc_id) {
+        rfp_update_predictor(op, actual);
+        STAT_EVENT(op->proc_id, RFP_PRED_MISS);
+        return;
+    }
+
+
+       rfp_addr = pred_addr;
+       rfp_update_predictor(op, actual);
+    }
+    
     
     // 1. Initialize the local 'dc' pointer for this core
     // This allows us to use dc->dcache and dc->ports
@@ -74,7 +187,7 @@ void default_rfp(Op* op) {
     // We use MRT_RFP so the memory system knows this is high priority
     Flag success = new_mem_req(MRT_RFP, 
                                proc_id, 
-                               oracle_addr, 
+                               rfp_addr, 
                                64,      // Size (64-byte line)
                                0,       // Delay
                                NULL,    // Op (passed NULL to prevent normal completion logic)
@@ -100,66 +213,66 @@ void rfp_try_schedule(Op* op) {
         return;
     }
 
-    for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+    Addr rfp_addr = 0;
 
-        if (!rfp_queue[i].valid) {
-            int prio;
-            int addr = op->oracle_info.va;
+    if (!RFP_USE_STRIDE) {
+        rfp_addr = op->oracle_info.va;
+    } else {
+        Addr actual = op->oracle_info.va;
+        Addr pred_addr = 0;
 
-            if (RFP_HIT_PREDICTOR) {
-                prio = predict_l1_hit(addr);
-                if (prio == !op->oracle_info.l1_miss) {
-                    STAT_EVENT(op->proc_id, HIT_PRED_ACCURATE);
-                }
-            } else {
-                prio = !op->oracle_info.l1_miss;
-            }
-
-            rfp_queue[i].addr = op->oracle_info.va;
-            rfp_queue[i].unique_num = op->unique_num;
-            rfp_queue[i].proc_id = op->proc_id;
-            rfp_queue[i].phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
-            rfp_queue[i].op_unique_num = op->unique_num; // Priority key
-            rfp_queue[i].valid = TRUE;
-            rfp_queue[i].priority = prio;
-            
-            if (!RFP_FIFO) {
-                rfp_queue[i].op_unique_num = prio ? 0 : op->unique_num;
-            }
-            STAT_EVENT(op->proc_id, RFP_QUEUED);
+        if (!rfp_predict_addr(op, &pred_addr)) {
+            rfp_update_predictor(op, actual);
             return;
         }
-    }
-    STAT_EVENT(op->proc_id, RFP_QUEUE_FULL);
 
+      if (get_proc_id_from_cmp_addr(pred_addr) != op->proc_id) {
+        rfp_update_predictor(op, actual);
+        STAT_EVENT(op->proc_id, RFP_PRED_MISS);
+        return;
+    }
+
+       rfp_addr = pred_addr;
+       rfp_update_predictor(op, actual);
+    }
+
+    for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
+    if (!rfp_queue[i].valid) {
+        int prio;
+        Addr addr = op->inst_info->addr;
+        Flag actual_hit = !op->oracle_info.l1_miss;
+
+        if (RFP_HIT_PREDICTOR) {
+            prio = predict_l1_hit(addr);
+
+            if (prio == actual_hit) {
+                STAT_EVENT(op->proc_id, HIT_PRED_ACCURATE);
+            }
+
+            train_l1_hit_predictor(addr, actual_hit);
+        } else {
+            prio = actual_hit;
+        }
+
+        rfp_queue[i].addr = rfp_addr;
+        rfp_queue[i].unique_num = op->unique_num;
+        rfp_queue[i].proc_id = op->proc_id;
+        rfp_queue[i].phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
+        rfp_queue[i].op_unique_num = op->unique_num;
+        rfp_queue[i].valid = TRUE;
+        rfp_queue[i].priority = prio;
+
+        if (!RFP_FIFO) {
+            rfp_queue[i].op_unique_num = prio ? 0 : op->unique_num;
+        }
+
+        STAT_EVENT(op->proc_id, RFP_QUEUED);
+        return;
+    }
 }
 
-void send_rfp(Op* op) {
-    uns proc_id = op->proc_id;
-    Addr oracle_addr = op->oracle_info.va;
+STAT_EVENT(op->proc_id, RFP_QUEUE_FULL);
 
-    // Prepare Prefetch Info
-    Pref_Req_Info pref_info = {0};
-    pref_info.dest = DEST_L1;
-    pref_info.is_l1_to_rf_pref = TRUE;
-    pref_info.dest_phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
-
-    Flag success = new_mem_req(MRT_RFP, 
-                               proc_id, 
-                               oracle_addr, 
-                               64,      // Size (64-byte line)
-                               0,       // Delay
-                               NULL,    // Op (passed NULL to prevent normal completion logic)
-                               NULL,    // Done function
-                               op->unique_num, 
-                               &pref_info);
-
-    if (success) {
-        set_rfp_state(op->unique_num, RFP_PENDING);
-        STAT_EVENT(proc_id, RFP_INJECTED);
-    } else {
-        STAT_EVENT(proc_id, RFP_INJECTION_FAILED);
-    }
 }
 
 Flag rfp_is_system_too_busy(uns proc_id) {

@@ -231,7 +231,7 @@ void init_mem_req_type_priorities() {
     const uns least_priority = (1 << num_type_priority_bits) - 2;  // leave one for MIN_PRIORITY
     switch (type) {
       case MRT_IFETCH:
-        priority = MEM_PRIORITY_IFETCH;
+        priority = MRT_IFETCH;
         break;
       case MRT_DFETCH:
         priority = MEM_PRIORITY_DFETCH;
