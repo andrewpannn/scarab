@@ -14,7 +14,6 @@ void init_hit_predictor(void) {
 
 Flag predict_l1_hit(Addr pc) {
     // Shift right by 2 to ignore the byte-alignment bits of the instruction address
-    // Use a bitwise AND (&) for a fast modulo operation
     uns index = (pc >> 2) & (HIT_PRED_TABLE_SIZE - 1);
     
     // If the counter is 2 or 3, we predict a hit.

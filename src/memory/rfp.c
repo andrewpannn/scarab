@@ -7,9 +7,8 @@
 #include "cmp_model.h"         // For cmp_model.dcache_stage
 #include "statistics.h"
 
-// Parameters - These could be moved to your param file later
-#define RFP_DEMAND_RESERVE 8  // Always keep 8 slots free for demand loads
-#define RFP_L1Q_THRESHOLD  16 // Don't inject if L1 queue is half full
+#define RFP_DEMAND_RESERVE 8  
+#define RFP_L1Q_THRESHOLD 16 
 #define MEM_REQ_BUFFER_ENTRIES 32
 
 RFP_Tracker_Entry rfp_tracker[RFP_TRACKER_SIZE];
@@ -154,37 +153,31 @@ void default_rfp(Op* op) {
     }
     
     
-    // 1. Initialize the local 'dc' pointer for this core
     // This allows us to use dc->dcache and dc->ports
     set_dcache_stage(&cmp_model.dcache_stage[proc_id]);
 
-    // 2. Updated Bank Calculation
     // Uses dc->dcache.shift_bits instead of L1_LINE_SIZE
     // and N_BIT_MASK instead of the % operator for speed
     uns bank = (oracle_addr >> dc->dcache.shift_bits) & N_BIT_MASK(LOG2(DCACHE_BANKS));
 
-    // 3. Check for Port Availability
+    // Check for Port Availability
     if (!get_read_port(&dc->ports[bank])) {
         STAT_EVENT(proc_id, RFP_PROBE_PORT_BUSY);
         return; 
     }
 
-    // 1. Admission Control (Throttling)
+    // Admission Control
     if (rfp_is_system_too_busy(proc_id)) {
         STAT_EVENT(proc_id, RFP_THROTTLED_SYS_BUSY);
         return; 
     }
 
-    // 2. Prepare Prefetch Info
-    // Note: Ensure your Pref_Req_Info struct in memory.h has these fields
+    // Prepare Prefetch Info
     Pref_Req_Info pref_info = {0};
     pref_info.dest = DEST_L1;
     pref_info.is_l1_to_rf_pref = TRUE;
-    // pref_info.rfp_op = op; 
     pref_info.dest_phys_reg = op->dst_reg_id[0][REG_TABLE_TYPE_PHYSICAL];
 
-    
-    // We use MRT_RFP so the memory system knows this is high priority
     Flag success = new_mem_req(MRT_RFP, 
                                proc_id, 
                                rfp_addr, 
@@ -236,6 +229,8 @@ void rfp_try_schedule(Op* op) {
        rfp_update_predictor(op, actual);
     }
 
+    // dual priority buffer, RR style
+    // FIFO for non priority requeusts
     for (int i = 0; i < RFP_QUEUE_SIZE; i++) {
     if (!rfp_queue[i].valid) {
         int prio;
@@ -244,11 +239,9 @@ void rfp_try_schedule(Op* op) {
 
         if (RFP_HIT_PREDICTOR) {
             prio = predict_l1_hit(addr);
-
             if (prio == actual_hit) {
                 STAT_EVENT(op->proc_id, HIT_PRED_ACCURATE);
             }
-
             train_l1_hit_predictor(addr, actual_hit);
         } else {
             prio = actual_hit;
@@ -314,12 +307,8 @@ Flag rfp_available_send(void) {
     return true;
 }
  
-// --- 2. ISSUE FROM QUEUE (The new logic) ---
+// RFP issue logic
 void rfp_advance_queue() {
-    // We only try to issue if the system isn't too busy
-    // You can also limit bandwidth here (e.g., only 1 issue per cycle)
-    // uns proc_id = 0; // Assume single core or loop through cores
-
     while (rfp_available_send()) {
         int best_idx = -1; 
         Counter oldest_unq = 0xFFFFFFFFFFFFFFFFULL;
@@ -335,7 +324,7 @@ void rfp_advance_queue() {
                     oldest_unq = rfp_queue[i].op_unique_num;
                 }
                 
-                // CASE 2: Comparing apples to apples (Both Hits OR Both Misses)
+                // (Both Hits OR Both Misses)
                 else if (rfp_queue[i].priority == found_hit) {
                     // Break ties using strict FIFO (oldest unique_num wins)
                     if (rfp_queue[i].valid && rfp_queue[i].op_unique_num < oldest_unq) {
